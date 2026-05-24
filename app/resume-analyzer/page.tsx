@@ -13,7 +13,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import type { CvAnalysisResult } from "@/lib/analysis-types";
+import {
+  GEMINI_BUSY_MESSAGE,
+  GEMINI_UNAVAILABLE_CODE,
+  type AnalyzeCvErrorResponse,
+} from "@/lib/gemini-errors";
 import { cn } from "@/lib/utils";
 
 /** Ten common job titles for the dropdown */
@@ -58,6 +65,90 @@ async function uploadAndExtractCv(file: File): Promise<string> {
   return data.text;
 }
 
+type AnalyzeCvOutcome =
+  | { success: true; data: CvAnalysisResult }
+  | { success: false; error: string; retryable: boolean };
+
+/**
+ * Send CV text, role, and job description to Gemini via /api/analyze-cv.
+ * Never throws — returns a result object so the UI cannot crash on API errors.
+ */
+async function analyzeCv(payload: {
+  cvText: string;
+  jobRole: string;
+  jobDescription: string;
+}): Promise<AnalyzeCvOutcome> {
+  try {
+    const response = await fetch("/api/analyze-cv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    let data: (CvAnalysisResult & AnalyzeCvErrorResponse) | null = null;
+
+    try {
+      data = (await response.json()) as CvAnalysisResult & AnalyzeCvErrorResponse;
+    } catch {
+      return {
+        success: false,
+        error: "Unexpected server response. Please try again.",
+        retryable: true,
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: data?.error ?? GEMINI_BUSY_MESSAGE,
+        retryable:
+          data?.retryable === true ||
+          data?.code === GEMINI_UNAVAILABLE_CODE ||
+          response.status === 503 ||
+          response.status === 429,
+      };
+    }
+
+    if (typeof data?.atsScore !== "number") {
+      return {
+        success: false,
+        error: "Unexpected analysis data. Please try again.",
+        retryable: true,
+      };
+    }
+
+    return { success: true, data };
+  } catch {
+    return {
+      success: false,
+      error: GEMINI_BUSY_MESSAGE,
+      retryable: true,
+    };
+  }
+}
+
+/**
+ * Pick badge colors for the ATS score (green / amber / red).
+ */
+function getScoreBadgeStyle(score: number): string {
+  if (score > 70) {
+    return "border-green-200 bg-green-100 text-green-800";
+  }
+  if (score >= 50) {
+    return "border-amber-200 bg-amber-100 text-amber-800";
+  }
+  return "border-red-200 bg-red-100 text-red-800";
+}
+
+/**
+ * Short label shown next to the numeric ATS score.
+ */
+function getScoreLabel(score: number): string {
+  if (score > 70) return "Strong match";
+  if (score >= 50) return "Moderate match";
+  return "Needs improvement";
+}
+
 // Route: /resume-analyzer
 export default function ResumeAnalyzerPage() {
   const [jobTitle, setJobTitle] = useState<JobTitle>(JOB_TITLES[0]);
@@ -65,18 +156,27 @@ export default function ResumeAnalyzerPage() {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [extractedText, setExtractedText] = useState<string | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [extractError, setExtractError] = useState<string | null>(null);
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<CvAnalysisResult | null>(
+    null
+  );
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysisErrorRetryable, setAnalysisErrorRetryable] = useState(false);
 
   /**
    * Called by react-dropzone when the user drops a file or picks one from the dialog.
-   * We only accept one PDF, then call the API to extract its text.
    */
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (!file) return;
 
-    setError(null);
+    setExtractError(null);
     setExtractedText(null);
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setAnalysisErrorRetryable(false);
     setUploadedFileName(file.name);
     setIsExtracting(true);
 
@@ -85,51 +185,99 @@ export default function ResumeAnalyzerPage() {
       setExtractedText(text);
     } catch (err) {
       setExtractedText(null);
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setExtractError(
+        err instanceof Error ? err.message : "Something went wrong."
+      );
     } finally {
       setIsExtracting(false);
     }
   }, []);
 
-  /**
-   * Configure the drag-and-drop zone: PDF only, single file.
-   * getRootProps / getInputProps must be spread onto the drop zone elements.
-   */
   const { getRootProps, getInputProps, isDragActive, isDragReject } =
     useDropzone({
       onDrop,
       accept: { "application/pdf": [".pdf"] },
       maxFiles: 1,
       multiple: false,
-      disabled: isExtracting,
+      disabled: isExtracting || isLoading,
     });
 
-  /**
-   * Clear the CV upload state so the user can try another file.
-   */
+  /** Clear uploaded CV and any analysis tied to it */
   function handleClearCv() {
     setUploadedFileName(null);
     setExtractedText(null);
-    setError(null);
+    setExtractError(null);
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setAnalysisErrorRetryable(false);
   }
 
+  /**
+   * Submit handler — sends parsed fields to /api/analyze-cv.
+   */
+  async function handleAnalyze() {
+    if (!extractedText?.trim()) {
+      setAnalysisError("Upload a CV PDF before analyzing.");
+      return;
+    }
+
+    if (!jobDescription.trim()) {
+      setAnalysisError("Paste a job description before analyzing.");
+      return;
+    }
+
+    setIsLoading(true);
+    setAnalysisError(null);
+    setAnalysisErrorRetryable(false);
+    setAnalysisResult(null);
+
+    const outcome = await analyzeCv({
+      cvText: extractedText,
+      jobRole: jobTitle,
+      jobDescription,
+    });
+
+    if (!outcome.success) {
+      setAnalysisError(outcome.error);
+      setAnalysisErrorRetryable(outcome.retryable);
+    } else {
+      setAnalysisResult(outcome.data);
+    }
+
+    setIsLoading(false);
+  }
+
+  const canAnalyze =
+    Boolean(extractedText?.trim()) &&
+    Boolean(jobDescription.trim()) &&
+    !isExtracting &&
+    !isLoading;
+
   return (
-    <div className="p-8">
+    <div className="relative p-8">
+      {/* Full-page loading overlay while Gemini runs */}
+      {isLoading && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-white/80 backdrop-blur-sm">
+          <Loader2 className="size-12 animate-spin text-primary" />
+          <p className="text-lg font-medium text-zinc-900">
+            AI is analyzing your profile...
+          </p>
+        </div>
+      )}
+
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <h1 className="text-3xl font-semibold tracking-tight">
           Resume Analyzer
         </h1>
-        <Badge variant="secondary">Step 1 — Upload CV</Badge>
+        <Badge variant="secondary">ATS analysis</Badge>
       </div>
 
       <div className="flex max-w-3xl flex-col gap-6">
-        {/* Job title dropdown */}
         <Card>
           <CardHeader>
             <CardTitle>Target role</CardTitle>
             <CardDescription>
-              Choose the job title you are applying for. This will be used for
-              matching later.
+              Choose the job title you are applying for.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -140,7 +288,8 @@ export default function ResumeAnalyzerPage() {
               id="job-title"
               value={jobTitle}
               onChange={(e) => setJobTitle(e.target.value as JobTitle)}
-              className="flex h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              disabled={isLoading}
+              className="flex h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
             >
               {JOB_TITLES.map((title) => (
                 <option key={title} value={title}>
@@ -151,13 +300,12 @@ export default function ResumeAnalyzerPage() {
           </CardContent>
         </Card>
 
-        {/* PDF drag-and-drop upload */}
         <Card>
           <CardHeader>
             <CardTitle>Upload your CV (PDF only)</CardTitle>
             <CardDescription>
-              Drag a PDF here or click to browse. We will extract the text so you
-              can confirm it looks correct.
+              Drag a PDF here or click to browse. We extract the text so you can
+              confirm it looks correct.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -170,7 +318,8 @@ export default function ResumeAnalyzerPage() {
                 !isDragActive &&
                   !isDragReject &&
                   "border-muted-foreground/30 hover:border-primary/50 hover:bg-muted/30",
-                isExtracting && "pointer-events-none opacity-60"
+                (isExtracting || isLoading) &&
+                  "pointer-events-none opacity-60"
               )}
             >
               <input {...getInputProps()} />
@@ -213,29 +362,27 @@ export default function ResumeAnalyzerPage() {
                   variant="ghost"
                   size="sm"
                   onClick={handleClearCv}
-                  disabled={isExtracting}
+                  disabled={isExtracting || isLoading}
                 >
                   Remove
                 </Button>
               </div>
             )}
 
-            {error && (
+            {extractError && (
               <p className="text-sm text-destructive" role="alert">
-                {error}
+                {extractError}
               </p>
             )}
           </CardContent>
         </Card>
 
-        {/* Extracted CV text preview */}
         {extractedText && (
           <Card>
             <CardHeader>
               <CardTitle>Extracted CV text</CardTitle>
               <CardDescription>
-                Review the text below. If anything looks wrong, try re-uploading a
-                different PDF or a cleaner export.
+                Review the text below before running analysis.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -246,28 +393,174 @@ export default function ResumeAnalyzerPage() {
           </Card>
         )}
 
-        {/* Job description paste area */}
         <Card>
           <CardHeader>
             <CardTitle>Job description</CardTitle>
             <CardDescription>
-              Paste the job posting here. In a later step, we will compare it to
-              your CV.
+              Paste the job posting you want to match against.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <label htmlFor="job-description" className="sr-only">
-              Job description
-            </label>
+          <CardContent className="flex flex-col gap-4">
             <Textarea
               id="job-description"
               placeholder="Paste the full job description here…"
               rows={10}
               value={jobDescription}
               onChange={(e) => setJobDescription(e.target.value)}
+              disabled={isLoading}
             />
+            <Button
+              type="button"
+              onClick={handleAnalyze}
+              disabled={!canAnalyze}
+              className="w-full sm:w-auto"
+            >
+              Analyze my CV
+            </Button>
+            {analysisError && (
+              <div
+                role="alert"
+                className={cn(
+                  "rounded-lg border px-4 py-3 text-sm",
+                  analysisErrorRetryable
+                    ? "border-amber-200 bg-amber-50 text-amber-900"
+                    : "border-destructive/30 bg-destructive/10 text-destructive"
+                )}
+              >
+                <p className="font-medium">
+                  {analysisErrorRetryable ? "Service temporarily unavailable" : "Analysis failed"}
+                </p>
+                <p className="mt-1">{analysisError}</p>
+              </div>
+            )}
           </CardContent>
         </Card>
+
+        {/* Results — shown after Gemini returns JSON */}
+        {analysisResult && !isLoading && (
+          <Card className="max-w-4xl">
+            <CardHeader>
+              <CardTitle>Analysis results</CardTitle>
+              <CardDescription>
+                ATS score and recommendations powered by Gemini
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="overview">
+                <TabsList className="mb-4 flex h-auto w-full flex-wrap">
+                  <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="skills">Missing skills</TabsTrigger>
+                  <TabsTrigger value="improvements">Improvements</TabsTrigger>
+                  <TabsTrigger value="interview">Interview prep</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="overview" className="space-y-6">
+                  <div className="flex flex-wrap items-end gap-4">
+                    <p className="text-7xl font-bold tracking-tight">
+                      {Math.round(analysisResult.atsScore)}
+                    </p>
+                    <div className="mb-2 flex flex-col gap-2">
+                      <span className="text-sm font-medium text-muted-foreground">
+                        ATS Score
+                      </span>
+                      <Badge
+                        className={cn(
+                          "border px-3 py-1 text-sm",
+                          getScoreBadgeStyle(analysisResult.atsScore)
+                        )}
+                      >
+                        {getScoreLabel(analysisResult.atsScore)}
+                      </Badge>
+                    </div>
+                  </div>
+                  <p className="leading-relaxed text-muted-foreground">
+                    {analysisResult.explanation}
+                  </p>
+                </TabsContent>
+
+                <TabsContent value="skills" className="space-y-3">
+                  {analysisResult.missingSkills.length === 0 ? (
+                    <p className="text-muted-foreground">
+                      No major skill gaps identified.
+                    </p>
+                  ) : (
+                    analysisResult.missingSkills.map((skill) => (
+                      <div
+                        key={skill.name}
+                        className="flex items-center justify-between rounded-lg border px-4 py-3"
+                      >
+                        <span className="font-medium">{skill.name}</span>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            skill.importance === "high" &&
+                              "border-red-200 bg-red-50 text-red-700",
+                            skill.importance === "medium" &&
+                              "border-amber-200 bg-amber-50 text-amber-700",
+                            skill.importance === "low" &&
+                              "border-zinc-200 bg-zinc-50 text-zinc-700"
+                          )}
+                        >
+                          {skill.importance}
+                        </Badge>
+                      </div>
+                    ))
+                  )}
+                </TabsContent>
+
+                <TabsContent value="improvements" className="space-y-4">
+                  {analysisResult.improvements.map((item, index) => (
+                    <Card key={index} size="sm">
+                      <CardHeader>
+                        <CardTitle className="text-base">
+                          {item.suggestion}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3 text-sm">
+                        <div>
+                          <p className="mb-1 font-medium text-muted-foreground">
+                            Before
+                          </p>
+                          <p className="rounded-md bg-red-50 p-3 text-red-900">
+                            {item.before}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="mb-1 font-medium text-muted-foreground">
+                            After
+                          </p>
+                          <p className="rounded-md bg-green-50 p-3 text-green-900">
+                            {item.after}
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </TabsContent>
+
+                <TabsContent value="interview" className="space-y-4">
+                  {analysisResult.interviewQuestions.map((item, index) => (
+                    <Card key={index} size="sm">
+                      <CardHeader>
+                        <CardTitle className="text-base">
+                          Q{index + 1}. {item.question}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-sm leading-relaxed text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            Model answer:{" "}
+                          </span>
+                          {item.modelAnswer}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
