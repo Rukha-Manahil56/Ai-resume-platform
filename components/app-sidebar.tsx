@@ -9,9 +9,9 @@ import {
   Mic,
 } from "lucide-react";
 
+import { AuthButton } from "@/components/auth-button";
 import { cn } from "@/lib/utils";
 
-// Each nav item: where it goes, what to show, and an icon from lucide-react
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/resume-analyzer", label: "Resume Analyzer", icon: FileText },
@@ -20,15 +20,16 @@ const navItems = [
 ] as const;
 
 /**
- * Left sidebar with links to every main section of the app.
- * "use client" is needed because we read the current URL to highlight the active link.
+ * Left sidebar with navigation links and sign-in / sign-out controls.
  */
 export function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col bg-zinc-900 text-zinc-100">
-      {/* App title / branding at the top of the sidebar */}
+    <aside
+      data-sidebar
+      className="flex w-64 shrink-0 flex-col bg-zinc-900 text-zinc-100"
+    >
       <div className="border-b border-zinc-800 px-6 py-5">
         <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
           AI Resume
@@ -36,10 +37,10 @@ export function AppSidebar() {
         <h1 className="text-lg font-semibold text-white">Platform</h1>
       </div>
 
-      {/* Navigation links */}
       <nav className="flex flex-1 flex-col gap-1 p-4">
         {navItems.map(({ href, label, icon: Icon }) => {
-          const isActive = pathname === href;
+          const isActive =
+            href === "/" ? pathname === "/" : pathname.startsWith(href);
 
           return (
             <Link
@@ -58,6 +59,8 @@ export function AppSidebar() {
           );
         })}
       </nav>
+
+      <AuthButton />
     </aside>
   );
 }

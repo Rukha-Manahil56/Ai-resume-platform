@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { FileText, Loader2, Upload } from "lucide-react";
+import { FileText, FileBarChart, Loader2, Upload } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -21,23 +22,10 @@ import {
   GEMINI_UNAVAILABLE_CODE,
   type AnalyzeCvErrorResponse,
 } from "@/lib/gemini-errors";
+import { JOB_TITLES, type JobTitle } from "@/lib/job-titles";
+import { saveAnalysisToDatabase } from "@/lib/save-analysis";
+import { getScoreBadgeStyle, getScoreLabel } from "@/lib/score-utils";
 import { cn } from "@/lib/utils";
-
-/** Ten common job titles for the dropdown */
-const JOB_TITLES = [
-  "Software Engineer",
-  "Product Manager",
-  "Data Analyst",
-  "UX Designer",
-  "Marketing Manager",
-  "Sales Representative",
-  "Project Manager",
-  "Business Analyst",
-  "DevOps Engineer",
-  "Human Resources Specialist",
-] as const;
-
-type JobTitle = (typeof JOB_TITLES)[number];
 
 /**
  * Send the PDF to our API route and return the extracted text.
@@ -127,28 +115,6 @@ async function analyzeCv(payload: {
   }
 }
 
-/**
- * Pick badge colors for the ATS score (green / amber / red).
- */
-function getScoreBadgeStyle(score: number): string {
-  if (score > 70) {
-    return "border-green-200 bg-green-100 text-green-800";
-  }
-  if (score >= 50) {
-    return "border-amber-200 bg-amber-100 text-amber-800";
-  }
-  return "border-red-200 bg-red-100 text-red-800";
-}
-
-/**
- * Short label shown next to the numeric ATS score.
- */
-function getScoreLabel(score: number): string {
-  if (score > 70) return "Strong match";
-  if (score >= 50) return "Moderate match";
-  return "Needs improvement";
-}
-
 // Route: /resume-analyzer
 export default function ResumeAnalyzerPage() {
   const [jobTitle, setJobTitle] = useState<JobTitle>(JOB_TITLES[0]);
@@ -164,6 +130,8 @@ export default function ResumeAnalyzerPage() {
   );
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysisErrorRetryable, setAnalysisErrorRetryable] = useState(false);
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null);
 
   /**
    * Called by react-dropzone when the user drops a file or picks one from the dialog.
@@ -177,6 +145,8 @@ export default function ResumeAnalyzerPage() {
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisErrorRetryable(false);
+    setSaveWarning(null);
+    setSavedAnalysisId(null);
     setUploadedFileName(file.name);
     setIsExtracting(true);
 
@@ -210,6 +180,8 @@ export default function ResumeAnalyzerPage() {
     setAnalysisResult(null);
     setAnalysisError(null);
     setAnalysisErrorRetryable(false);
+    setSaveWarning(null);
+    setSavedAnalysisId(null);
   }
 
   /**
@@ -229,6 +201,8 @@ export default function ResumeAnalyzerPage() {
     setIsLoading(true);
     setAnalysisError(null);
     setAnalysisErrorRetryable(false);
+    setSaveWarning(null);
+    setSavedAnalysisId(null);
     setAnalysisResult(null);
 
     const outcome = await analyzeCv({
@@ -240,8 +214,24 @@ export default function ResumeAnalyzerPage() {
     if (!outcome.success) {
       setAnalysisError(outcome.error);
       setAnalysisErrorRetryable(outcome.retryable);
+      setIsLoading(false);
+      return;
+    }
+
+    setAnalysisResult(outcome.data);
+
+    // Save to Supabase so it appears on the dashboard (non-blocking if save fails)
+    const saveOutcome = await saveAnalysisToDatabase({
+      cvText: extractedText,
+      jobRole: jobTitle,
+      atsScore: outcome.data.atsScore,
+      fullAnalysis: outcome.data,
+    });
+
+    if (!saveOutcome.success) {
+      setSaveWarning(saveOutcome.error);
     } else {
-      setAnalysisResult(outcome.data);
+      setSavedAnalysisId(saveOutcome.id);
     }
 
     setIsLoading(false);
@@ -433,17 +423,43 @@ export default function ResumeAnalyzerPage() {
                 <p className="mt-1">{analysisError}</p>
               </div>
             )}
+            {saveWarning && (
+              <div
+                role="status"
+                className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+              >
+                {saveWarning}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         {/* Results — shown after Gemini returns JSON */}
         {analysisResult && !isLoading && (
           <Card className="max-w-4xl">
-            <CardHeader>
-              <CardTitle>Analysis results</CardTitle>
-              <CardDescription>
-                ATS score and recommendations powered by Gemini
-              </CardDescription>
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4">
+              <div>
+                <CardTitle>Analysis results</CardTitle>
+                <CardDescription>
+                  ATS score and recommendations powered by Gemini
+                </CardDescription>
+              </div>
+              {savedAnalysisId ? (
+                <Link
+                  href={`/reports/${savedAnalysisId}`}
+                  className={cn(
+                    buttonVariants(),
+                    "no-print inline-flex shrink-0 items-center gap-2"
+                  )}
+                >
+                  <FileBarChart className="size-4" />
+                  Generate Report
+                </Link>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Sign in and save to generate a report
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               <Tabs defaultValue="overview">

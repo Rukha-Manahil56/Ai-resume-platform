@@ -128,3 +128,31 @@
     @apply font-sans;
   }
 }
+
+/* Hiring readiness report — hide chrome when printing */
+@media print {
+  [data-sidebar],
+  .no-print {
+    display: none !important;
+  }
+
+  main {
+    overflow: visible !important;
+  }
+
+  .report-page {
+    max-width: 100% !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-verdict {
+    break-inside: avoid;
+  }
+
+  body {
+    background: white !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
