@@ -7,27 +7,25 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
-// Which screen is currently shown
 type Step =
-  | "landing"        // initial screen — Google + email options
-  | "signup"         // create account form
-  | "login"          // email + password login
-  | "forgot-email"   // enter email to receive OTP
-  | "forgot-otp"     // enter 6-digit OTP
-  | "forgot-newpw"   // enter new password after OTP verified
-  | "forgot-done";   // success screen
+  | "landing"
+  | "signup"
+  | "login"
+  | "forgot-email"
+  | "forgot-otp"
+  | "forgot-newpw"
+  | "forgot-done";
 
-// ── Password rule checker ──────────────────────────────────────────────────
 interface PasswordRule {
   label: string;
   test: (pw: string) => boolean;
 }
 
 const PASSWORD_RULES: PasswordRule[] = [
-  { label: "At least 6 characters",         test: (pw) => pw.length >= 6 },
-  { label: "At least 1 uppercase letter",   test: (pw) => /[A-Z]/.test(pw) },
-  { label: "At least 1 lowercase letter",   test: (pw) => /[a-z]/.test(pw) },
-  { label: "At least 1 special character",  test: (pw) => /[^A-Za-z0-9]/.test(pw) },
+  { label: "At least 6 characters",        test: (pw) => pw.length >= 6 },
+  { label: "At least 1 uppercase letter",  test: (pw) => /[A-Z]/.test(pw) },
+  { label: "At least 1 lowercase letter",  test: (pw) => /[a-z]/.test(pw) },
+  { label: "At least 1 special character", test: (pw) => /[^A-Za-z0-9]/.test(pw) },
 ];
 
 function validatePassword(pw: string): string | null {
@@ -37,28 +35,26 @@ function validatePassword(pw: string): string | null {
   return null;
 }
 
-// ── Main component ─────────────────────────────────────────────────────────
 export function LoginForm() {
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirect") ?? "/";
+  const redirectTo = searchParams.get("redirect") ?? "/dashboard";
   const urlError = searchParams.get("error");
 
-  const [step, setStep]         = useState<Step>("landing");
+  const [step, setStep]     = useState<Step>("landing");
   const [isLoading, setLoading] = useState(false);
-  const [error, setError]       = useState<string | null>(urlError);
-  const [success, setSuccess]   = useState<string | null>(null);
+  const [error, setError]   = useState<string | null>(urlError);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  // form fields
-  const [name, setName]               = useState("");
-  const [email, setEmail]             = useState("");
-  const [password, setPassword]       = useState("");
-  const [confirmPw, setConfirmPw]     = useState("");
-  const [otp, setOtp]                 = useState("");
-  const [showPw, setShowPw]           = useState(false);
+  const [name, setName]           = useState("");
+  const [email, setEmail]         = useState("");
+  const [password, setPassword]   = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [otp, setOtp]             = useState("");
+  const [showPw, setShowPw]       = useState(false);
   const [showConfirmPw, setShowConfirmPw] = useState(false);
-  const [showNewPw, setShowNewPw]     = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
   const [showConfirmNewPw, setShowConfirmNewPw] = useState(false);
-  const [newPw, setNewPw]             = useState("");
+  const [newPw, setNewPw]         = useState("");
   const [confirmNewPw, setConfirmNewPw] = useState("");
 
   const supabase = createClient();
@@ -69,29 +65,34 @@ export function LoginForm() {
     setStep(target);
   }
 
+  /* Always land on /dashboard after any successful auth */
   function goToDashboard() {
-    window.location.href = redirectTo === "/" ? "/dashboard" : redirectTo;
+    const destination =
+      !redirectTo || redirectTo === "/" || redirectTo === "/login"
+        ? "/dashboard"
+        : redirectTo;
+    window.location.href = destination;
   }
 
-  // ── Google OAuth ───────────────────────────────────────────────────────
+  /* ── Google OAuth ── */
   async function handleGoogle() {
     setLoading(true);
     setError(null);
     const { error: e } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectTo)}`,
+        /* Always redirect to /dashboard after Google login */
+        redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
       },
     });
     if (e) { setError(e.message); setLoading(false); }
   }
 
-  // ── Sign Up ────────────────────────────────────────────────────────────
+  /* ── Sign Up ── */
   async function handleSignUp(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    // frontend validation
     const pwError = validatePassword(password);
     if (pwError) { setError(pwError); return; }
     if (password !== confirmPw) { setError("Passwords do not match."); return; }
@@ -101,10 +102,7 @@ export function LoginForm() {
     const { error: signUpErr } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        // stores the name in user metadata — accessible as user.user_metadata.full_name
-        data: { full_name: name },
-      },
+      options: { data: { full_name: name } },
     });
 
     if (signUpErr) {
@@ -113,11 +111,10 @@ export function LoginForm() {
       return;
     }
 
-    // signup succeeded — log them in immediately
+    /* Auto sign-in after signup */
     const { error: loginErr } = await supabase.auth.signInWithPassword({ email, password });
 
     if (loginErr) {
-      // account created but auto-login failed — send to login page
       setSuccess("Account created! Please sign in.");
       setStep("login");
     } else {
@@ -127,7 +124,7 @@ export function LoginForm() {
     setLoading(false);
   }
 
-  // ── Login ──────────────────────────────────────────────────────────────
+  /* ── Login ── */
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -144,24 +141,18 @@ export function LoginForm() {
     goToDashboard();
   }
 
-  // ── Forgot password — send OTP ─────────────────────────────────────────
+  /* ── Forgot password — send OTP ── */
   async function handleForgotSendOtp(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
-    /*
-      Supabase sends a 6-digit OTP when you call signInWithOtp.
-      We then verify it with type: "email" and after that call updateUser
-      to set the new password. This is the correct free-tier approach.
-    */
     const { error: otpErr } = await supabase.auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: false }, // don't create a new account
+      options: { shouldCreateUser: false },
     });
 
     if (otpErr) {
-      // "Email not found" comes back as a generic error for security
       setError(otpErr.message);
       setLoading(false);
       return;
@@ -172,7 +163,7 @@ export function LoginForm() {
     setLoading(false);
   }
 
-  // ── Forgot password — verify OTP ──────────────────────────────────────
+  /* ── Forgot password — verify OTP ── */
   async function handleVerifyOtp(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -196,12 +187,11 @@ export function LoginForm() {
       return;
     }
 
-    // OTP verified — user is now temporarily signed in, let them set new password
     setStep("forgot-newpw");
     setLoading(false);
   }
 
-  // ── Forgot password — set new password ────────────────────────────────
+  /* ── Forgot password — set new password ── */
   async function handleSetNewPassword(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -212,7 +202,6 @@ export function LoginForm() {
 
     setLoading(true);
 
-    // updateUser works here because verifyOtp gave us an active session
     const { error: updateErr } = await supabase.auth.updateUser({ password: newPw });
 
     if (updateErr) {
@@ -225,7 +214,7 @@ export function LoginForm() {
     setLoading(false);
   }
 
-  // ── Resend OTP ─────────────────────────────────────────────────────────
+  /* ── Resend OTP ── */
   async function handleResendOtp() {
     setLoading(true);
     setError(null);
@@ -238,11 +227,13 @@ export function LoginForm() {
     setLoading(false);
   }
 
-  // ── RENDER ─────────────────────────────────────────────────────────────
+  /* ────────────────────────────────────────────
+     RENDER
+  ──────────────────────────────────────────── */
   return (
     <div className="flex min-h-screen w-full">
 
-      {/* Left hero panel — hidden on mobile */}
+      {/* ── Left hero panel ── */}
       <div
         className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12"
         style={{ background: "#0a0a0a" }}
@@ -256,18 +247,22 @@ export function LoginForm() {
 
         <div className="space-y-8">
           <div className="space-y-4">
-            <h1
-              className="text-white"
-              style={{ fontSize: "clamp(2rem,4vw,3rem)", fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.03em" }}
-            >
+            <h1 className="text-white"
+              style={{ fontSize: "clamp(2rem,4vw,3rem)", fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.03em" }}>
               Land your dream job with AI precision
             </h1>
             <p style={{ color: "oklch(0.65 0 0)", fontSize: "1.05rem", lineHeight: 1.7 }}>
-              Upload your CV, get an instant ATS score, identify skill gaps, and practice interviews with an AI coach.
+              Upload your CV, get an instant ATS score, identify skill gaps,
+              and practice interviews with an AI coach.
             </p>
           </div>
           <div className="space-y-3">
-            {["Instant ATS match score", "Missing skills analysis", "AI mock interview practice", "Hiring readiness report"].map((f) => (
+            {[
+              "Instant ATS match score",
+              "Missing skills analysis",
+              "AI mock interview practice",
+              "Hiring readiness report",
+            ].map((f) => (
               <div key={f} className="flex items-center gap-3">
                 <CheckCircle2 className="w-5 h-5 shrink-0 text-white" />
                 <span style={{ color: "oklch(0.75 0 0)", fontSize: "0.95rem" }}>{f}</span>
@@ -276,10 +271,12 @@ export function LoginForm() {
           </div>
         </div>
 
-        <p style={{ color: "oklch(0.35 0 0)", fontSize: "0.8rem" }}>© 2025 ResumeIQ. All rights reserved.</p>
+        <p style={{ color: "oklch(0.35 0 0)", fontSize: "0.8rem" }}>
+          © 2025 ResumeIQ. All rights reserved.
+        </p>
       </div>
 
-      {/* Right form panel */}
+      {/* ── Right form panel ── */}
       <div className="flex w-full lg:w-1/2 flex-col items-center justify-center p-6 sm:p-10 bg-white">
 
         {/* Mobile logo */}
@@ -301,16 +298,16 @@ export function LoginForm() {
               </div>
 
               <GoogleButton loading={isLoading} onClick={handleGoogle} />
-              <div className="relative my-4">
-  <div className="absolute inset-0 flex items-center">
-    <span className="w-full border-t" />
-  </div>
-  <div className="relative flex justify-center text-xs uppercase">
-    <span className="bg-background px-2 text-muted-foreground">
-      or
-    </span>
-  </div>
-</div>
+
+              <div className="relative my-2">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" style={{ borderColor: "#e5e5e5" }} />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="px-3 bg-white text-xs uppercase tracking-wider"
+                        style={{ color: "#aaa" }}>or</span>
+                </div>
+              </div>
 
               <div className="space-y-3">
                 <BlackButton onClick={() => reset("login")}>Sign in with email</BlackButton>
@@ -347,14 +344,14 @@ export function LoginForm() {
                   <button type="button" onClick={() => setShowPw(!showPw)} tabIndex={-1}>
                     {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
-                }
-              >
-                <input type={showPw ? "text" : "password"} required placeholder="Create a password"
+                }>
+                <input type={showPw ? "text" : "password"} required
+                  placeholder="Create a password"
                   value={password} onChange={(e) => setPassword(e.target.value)}
                   className="styled-input" style={{ paddingRight: "2.8rem" }} />
               </InputField>
 
-              {/* Password rules checklist */}
+              {/* Live password rules checklist */}
               {password.length > 0 && (
                 <div className="rounded-xl p-3 space-y-1.5" style={{ background: "#f7f7f7" }}>
                   {PASSWORD_RULES.map((rule) => {
@@ -363,7 +360,7 @@ export function LoginForm() {
                       <div key={rule.label} className="flex items-center gap-2">
                         {ok
                           ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "#16a34a" }} />
-                          : <XCircle className="w-3.5 h-3.5 shrink-0" style={{ color: "#dc2626" }} />}
+                          : <XCircle    className="w-3.5 h-3.5 shrink-0" style={{ color: "#dc2626" }} />}
                         <span style={{ fontSize: "0.78rem", color: ok ? "#16a34a" : "#dc2626" }}>
                           {rule.label}
                         </span>
@@ -378,24 +375,25 @@ export function LoginForm() {
                   <button type="button" onClick={() => setShowConfirmPw(!showConfirmPw)} tabIndex={-1}>
                     {showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
-                }
-              >
-                <input type={showConfirmPw ? "text" : "password"} required placeholder="Repeat password"
+                }>
+                <input type={showConfirmPw ? "text" : "password"} required
+                  placeholder="Repeat password"
                   value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
                   className="styled-input" style={{ paddingRight: "2.8rem" }} />
               </InputField>
 
-              {/* Confirm match indicator */}
               {confirmPw.length > 0 && (
                 <div className="flex items-center gap-2">
                   {confirmPw === password
-                    ? <><CheckCircle2 className="w-3.5 h-3.5" style={{ color: "#16a34a" }} /><span style={{ fontSize: "0.78rem", color: "#16a34a" }}>Passwords match</span></>
-                    : <><XCircle className="w-3.5 h-3.5" style={{ color: "#dc2626" }} /><span style={{ fontSize: "0.78rem", color: "#dc2626" }}>Passwords do not match</span></>
+                    ? <><CheckCircle2 className="w-3.5 h-3.5" style={{ color: "#16a34a" }} />
+                        <span style={{ fontSize: "0.78rem", color: "#16a34a" }}>Passwords match</span></>
+                    : <><XCircle className="w-3.5 h-3.5" style={{ color: "#dc2626" }} />
+                        <span style={{ fontSize: "0.78rem", color: "#dc2626" }}>Passwords do not match</span></>
                   }
                 </div>
               )}
 
-              {error && <ErrorMsg message={error} />}
+              {error   && <ErrorMsg   message={error} />}
               {success && <SuccessMsg message={success} />}
 
               <SubmitBtn loading={isLoading} label="Create account" />
@@ -430,26 +428,34 @@ export function LoginForm() {
                   <button type="button" onClick={() => setShowPw(!showPw)} tabIndex={-1}>
                     {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
-                }
-              >
-                <input type={showPw ? "text" : "password"} required placeholder="Your password"
+                }>
+                <input type={showPw ? "text" : "password"} required
+                  placeholder="Your password"
                   value={password} onChange={(e) => setPassword(e.target.value)}
                   className="styled-input" style={{ paddingRight: "2.8rem" }} />
               </InputField>
 
-              {/* Forgot password link */}
               <div className="flex justify-end">
                 <button type="button" onClick={() => reset("forgot-email")}
-                  style={{ fontSize: "0.85rem", color: "#0a0a0a", fontWeight: 600 }}
-                  className="underline">
+                  className="underline" style={{ fontSize: "0.85rem", color: "#8B5CF6", fontWeight: 600 }}>
                   Forgot password?
                 </button>
               </div>
 
-              {error && <ErrorMsg message={error} />}
+              {error   && <ErrorMsg   message={error} />}
               {success && <SuccessMsg message={success} />}
 
               <SubmitBtn loading={isLoading} label="Sign in" />
+
+              <div className="relative my-2">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" style={{ borderColor: "#e5e5e5" }} />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="px-3 bg-white text-xs uppercase tracking-wider"
+                        style={{ color: "#aaa" }}>or</span>
+                </div>
+              </div>
 
               <GoogleButton loading={isLoading} onClick={handleGoogle} />
 
@@ -494,7 +500,6 @@ export function LoginForm() {
                 </p>
               </div>
 
-              {/* Big centered OTP input */}
               <div className="space-y-2">
                 <label style={{ fontSize: "0.85rem", fontWeight: 600, color: "#0a0a0a" }}>
                   6-digit code
@@ -509,13 +514,13 @@ export function LoginForm() {
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   className="w-full text-center font-mono tracking-[0.5em] py-4 rounded-xl border-2 text-2xl font-bold outline-none transition-all"
                   style={{
-                    borderColor: otp.length === 6 ? "#0a0a0a" : "#e0e0e0",
+                    borderColor: otp.length === 6 ? "#8B5CF6" : "#e0e0e0",
                     color: "#0a0a0a",
                     background: "white",
                   }}
                 />
                 <p style={{ fontSize: "0.78rem", color: "oklch(0.55 0 0)", textAlign: "center" }}>
-                  Only numbers accepted · exactly 6 digits
+                  Numbers only · exactly 6 digits
                 </p>
               </div>
 
@@ -525,20 +530,19 @@ export function LoginForm() {
 
               <div className="flex justify-between">
                 <button type="button" onClick={() => reset("forgot-email")}
-                  style={{ fontSize: "0.85rem", color: "oklch(0.5 0 0)" }}
-                  className="underline">
+                  className="underline text-sm" style={{ color: "oklch(0.5 0 0)" }}>
                   Wrong email?
                 </button>
                 <button type="button" onClick={handleResendOtp} disabled={isLoading}
-                  style={{ fontSize: "0.85rem", fontWeight: 600, color: "#0a0a0a" }}
-                  className="underline disabled:opacity-40">
+                  className="underline text-sm font-semibold disabled:opacity-40"
+                  style={{ color: "#8B5CF6" }}>
                   Resend code
                 </button>
               </div>
             </form>
           )}
 
-          {/* ══ FORGOT — set new password ══ */}
+          {/* ══ FORGOT — new password ══ */}
           {step === "forgot-newpw" && (
             <form onSubmit={handleSetNewPassword} className="space-y-4">
               <div>
@@ -551,9 +555,9 @@ export function LoginForm() {
                   <button type="button" onClick={() => setShowNewPw(!showNewPw)} tabIndex={-1}>
                     {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
-                }
-              >
-                <input type={showNewPw ? "text" : "password"} required placeholder="New password"
+                }>
+                <input type={showNewPw ? "text" : "password"} required
+                  placeholder="New password"
                   value={newPw} onChange={(e) => setNewPw(e.target.value)}
                   className="styled-input" style={{ paddingRight: "2.8rem" }} />
               </InputField>
@@ -566,7 +570,7 @@ export function LoginForm() {
                       <div key={rule.label} className="flex items-center gap-2">
                         {ok
                           ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "#16a34a" }} />
-                          : <XCircle className="w-3.5 h-3.5 shrink-0" style={{ color: "#dc2626" }} />}
+                          : <XCircle    className="w-3.5 h-3.5 shrink-0" style={{ color: "#dc2626" }} />}
                         <span style={{ fontSize: "0.78rem", color: ok ? "#16a34a" : "#dc2626" }}>
                           {rule.label}
                         </span>
@@ -581,9 +585,9 @@ export function LoginForm() {
                   <button type="button" onClick={() => setShowConfirmNewPw(!showConfirmNewPw)} tabIndex={-1}>
                     {showConfirmNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
-                }
-              >
-                <input type={showConfirmNewPw ? "text" : "password"} required placeholder="Repeat new password"
+                }>
+                <input type={showConfirmNewPw ? "text" : "password"} required
+                  placeholder="Repeat new password"
                   value={confirmNewPw} onChange={(e) => setConfirmNewPw(e.target.value)}
                   className="styled-input" style={{ paddingRight: "2.8rem" }} />
               </InputField>
@@ -591,8 +595,10 @@ export function LoginForm() {
               {confirmNewPw.length > 0 && (
                 <div className="flex items-center gap-2">
                   {confirmNewPw === newPw
-                    ? <><CheckCircle2 className="w-3.5 h-3.5" style={{ color: "#16a34a" }} /><span style={{ fontSize: "0.78rem", color: "#16a34a" }}>Passwords match</span></>
-                    : <><XCircle className="w-3.5 h-3.5" style={{ color: "#dc2626" }} /><span style={{ fontSize: "0.78rem", color: "#dc2626" }}>Passwords do not match</span></>
+                    ? <><CheckCircle2 className="w-3.5 h-3.5" style={{ color: "#16a34a" }} />
+                        <span style={{ fontSize: "0.78rem", color: "#16a34a" }}>Passwords match</span></>
+                    : <><XCircle className="w-3.5 h-3.5" style={{ color: "#dc2626" }} />
+                        <span style={{ fontSize: "0.78rem", color: "#dc2626" }}>Passwords do not match</span></>
                   }
                 </div>
               )}
@@ -622,7 +628,6 @@ export function LoginForm() {
 
         </div>
 
-        {/* Inline styles for inputs — Tailwind v4 safe */}
         <style>{`
           .styled-input {
             width: 100%;
@@ -635,15 +640,19 @@ export function LoginForm() {
             outline: none;
             transition: border-color 0.15s;
           }
-          .styled-input:focus { border-color: #0a0a0a; }
-          .styled-input::placeholder { color: #aaa; }
+          .styled-input:focus { border-color: #8B5CF6; }
+          .styled-input::placeholder { color: #bbb; }
+          @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
         `}</style>
       </div>
     </div>
   );
 }
 
-// ── Shared style constants ──────────────────────────────────────────────────
+/* ── Style constants ── */
 const headingStyle: React.CSSProperties = {
   fontSize: "1.8rem", fontWeight: 700, color: "#0a0a0a",
   letterSpacing: "-0.02em", lineHeight: 1.15,
@@ -652,7 +661,7 @@ const subStyle: React.CSSProperties = {
   fontSize: "0.9rem", color: "oklch(0.5 0 0)", marginTop: "0.25rem",
 };
 
-// ── Small reusable components ───────────────────────────────────────────────
+/* ── Reusable components ── */
 function BackBtn({ onClick }: { onClick: () => void }) {
   return (
     <button type="button" onClick={onClick}
@@ -663,13 +672,9 @@ function BackBtn({ onClick }: { onClick: () => void }) {
   );
 }
 
-function InputField({
-  label, icon, rightIcon, children,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  rightIcon?: React.ReactNode;
-  children: React.ReactNode;
+function InputField({ label, icon, rightIcon, children }: {
+  label: string; icon: React.ReactNode;
+  rightIcon?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
     <div className="space-y-1.5">
