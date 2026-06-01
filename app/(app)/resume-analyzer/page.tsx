@@ -3,53 +3,26 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { FileText, FileBarChart, Loader2, Upload } from "lucide-react";
+import { FileText, FileBarChart, Loader2, Upload, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { CvAnalysisResult } from "@/lib/analysis-types";
-import {
-  GEMINI_BUSY_MESSAGE,
-  GEMINI_UNAVAILABLE_CODE,
-  type AnalyzeCvErrorResponse,
-} from "@/lib/gemini-errors";
+import { GEMINI_BUSY_MESSAGE, GEMINI_UNAVAILABLE_CODE, type AnalyzeCvErrorResponse } from "@/lib/gemini-errors";
 import { JOB_TITLES, type JobTitle } from "@/lib/job-titles";
 import { saveAnalysisToDatabase } from "@/lib/save-analysis";
 import { getScoreBadgeStyle, getScoreLabel } from "@/lib/score-utils";
 import { cn } from "@/lib/utils";
 
-/**
- * Send the PDF to our API route and return the extracted text.
- * Throws an error with a human-readable message if something goes wrong.
- */
 async function uploadAndExtractCv(file: File): Promise<string> {
   const formData = new FormData();
   formData.append("file", file);
-
-  const response = await fetch("/api/extract-cv", {
-    method: "POST",
-    body: formData,
-  });
-
+  const response = await fetch("/api/extract-cv", { method: "POST", body: formData });
   const data = (await response.json()) as { text?: string; error?: string };
-
-  if (!response.ok) {
-    throw new Error(data.error ?? "Failed to extract text from PDF.");
-  }
-
-  if (!data.text) {
-    throw new Error("No text was returned from the server.");
-  }
-
+  if (!response.ok) throw new Error(data.error ?? "Failed to extract text from PDF.");
+  if (!data.text) throw new Error("No text was returned from the server.");
   return data.text;
 }
 
@@ -57,526 +30,404 @@ type AnalyzeCvOutcome =
   | { success: true; data: CvAnalysisResult }
   | { success: false; error: string; retryable: boolean };
 
-/**
- * Send CV text, role, and job description to Gemini via /api/analyze-cv.
- * Never throws — returns a result object so the UI cannot crash on API errors.
- */
-async function analyzeCv(payload: {
-  cvText: string;
-  jobRole: string;
-  jobDescription: string;
-}): Promise<AnalyzeCvOutcome> {
+async function analyzeCv(payload: { cvText: string; jobRole: string; jobDescription: string }): Promise<AnalyzeCvOutcome> {
   try {
     const response = await fetch("/api/analyze-cv", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-
     let data: (CvAnalysisResult & AnalyzeCvErrorResponse) | null = null;
-
-    try {
-      data = (await response.json()) as CvAnalysisResult & AnalyzeCvErrorResponse;
-    } catch {
-      return {
-        success: false,
-        error: "Unexpected server response. Please try again.",
-        retryable: true,
-      };
+    try { data = await response.json(); } catch {
+      return { success: false, error: "Unexpected server response. Please try again.", retryable: true };
     }
-
     if (!response.ok) {
       return {
         success: false,
         error: data?.error ?? GEMINI_BUSY_MESSAGE,
-        retryable:
-          data?.retryable === true ||
-          data?.code === GEMINI_UNAVAILABLE_CODE ||
-          response.status === 503 ||
-          response.status === 429,
+        retryable: data?.retryable === true || data?.code === GEMINI_UNAVAILABLE_CODE || response.status === 503 || response.status === 429,
       };
     }
-
-    if (typeof data?.atsScore !== "number") {
-      return {
-        success: false,
-        error: "Unexpected analysis data. Please try again.",
-        retryable: true,
-      };
-    }
-
+    if (typeof data?.atsScore !== "number") return { success: false, error: "Unexpected analysis data. Please try again.", retryable: true };
     return { success: true, data };
   } catch {
-    return {
-      success: false,
-      error: GEMINI_BUSY_MESSAGE,
-      retryable: true,
-    };
+    return { success: false, error: GEMINI_BUSY_MESSAGE, retryable: true };
   }
 }
 
-// Route: /resume-analyzer
 export default function ResumeAnalyzerPage() {
-  const [jobTitle, setJobTitle] = useState<JobTitle>(JOB_TITLES[0]);
-  const [jobDescription, setJobDescription] = useState("");
+  const [jobTitle, setJobTitle]               = useState<JobTitle>(JOB_TITLES[0]);
+  const [jobDescription, setJobDescription]   = useState("");
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
-  const [extractedText, setExtractedText] = useState<string | null>(null);
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [extractError, setExtractError] = useState<string | null>(null);
-
-  const [isLoading, setIsLoading] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<CvAnalysisResult | null>(
-    null
-  );
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [extractedText, setExtractedText]     = useState<string | null>(null);
+  const [isExtracting, setIsExtracting]       = useState(false);
+  const [extractError, setExtractError]       = useState<string | null>(null);
+  const [isLoading, setIsLoading]             = useState(false);
+  const [analysisResult, setAnalysisResult]   = useState<CvAnalysisResult | null>(null);
+  const [analysisError, setAnalysisError]     = useState<string | null>(null);
   const [analysisErrorRetryable, setAnalysisErrorRetryable] = useState(false);
-  const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  const [saveWarning, setSaveWarning]         = useState<string | null>(null);
   const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null);
 
-  /**
-   * Called by react-dropzone when the user drops a file or picks one from the dialog.
-   */
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (!file) return;
-
-    setExtractError(null);
-    setExtractedText(null);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setAnalysisErrorRetryable(false);
-    setSaveWarning(null);
-    setSavedAnalysisId(null);
-    setUploadedFileName(file.name);
-    setIsExtracting(true);
-
+    setExtractError(null); setExtractedText(null); setAnalysisResult(null);
+    setAnalysisError(null); setAnalysisErrorRetryable(false);
+    setSaveWarning(null); setSavedAnalysisId(null);
+    setUploadedFileName(file.name); setIsExtracting(true);
     try {
       const text = await uploadAndExtractCv(file);
       setExtractedText(text);
     } catch (err) {
       setExtractedText(null);
-      setExtractError(
-        err instanceof Error ? err.message : "Something went wrong."
-      );
-    } finally {
-      setIsExtracting(false);
-    }
+      setExtractError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally { setIsExtracting(false); }
   }, []);
 
-  const { getRootProps, getInputProps, isDragActive, isDragReject } =
-    useDropzone({
-      onDrop,
-      accept: { "application/pdf": [".pdf"] },
-      maxFiles: 1,
-      multiple: false,
-      disabled: isExtracting || isLoading,
-    });
+  const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
+    onDrop,
+    accept: { "application/pdf": [".pdf"] },
+    maxFiles: 1, multiple: false,
+    disabled: isExtracting || isLoading,
+  });
 
-  /** Clear uploaded CV and any analysis tied to it */
   function handleClearCv() {
-    setUploadedFileName(null);
-    setExtractedText(null);
-    setExtractError(null);
-    setAnalysisResult(null);
-    setAnalysisError(null);
-    setAnalysisErrorRetryable(false);
-    setSaveWarning(null);
-    setSavedAnalysisId(null);
+    setUploadedFileName(null); setExtractedText(null); setExtractError(null);
+    setAnalysisResult(null); setAnalysisError(null); setAnalysisErrorRetryable(false);
+    setSaveWarning(null); setSavedAnalysisId(null);
   }
 
-  /**
-   * Submit handler — sends parsed fields to /api/analyze-cv.
-   */
   async function handleAnalyze() {
-    if (!extractedText?.trim()) {
-      setAnalysisError("Upload a CV PDF before analyzing.");
-      return;
-    }
-
-    if (!jobDescription.trim()) {
-      setAnalysisError("Paste a job description before analyzing.");
-      return;
-    }
-
-    setIsLoading(true);
-    setAnalysisError(null);
-    setAnalysisErrorRetryable(false);
-    setSaveWarning(null);
-    setSavedAnalysisId(null);
-    setAnalysisResult(null);
-
-    const outcome = await analyzeCv({
-      cvText: extractedText,
-      jobRole: jobTitle,
-      jobDescription,
-    });
-
+    if (!extractedText?.trim()) { setAnalysisError("Upload a CV PDF before analyzing."); return; }
+    if (!jobDescription.trim()) { setAnalysisError("Paste a job description before analyzing."); return; }
+    setIsLoading(true); setAnalysisError(null); setAnalysisErrorRetryable(false);
+    setSaveWarning(null); setSavedAnalysisId(null); setAnalysisResult(null);
+    const outcome = await analyzeCv({ cvText: extractedText, jobRole: jobTitle, jobDescription });
     if (!outcome.success) {
-      setAnalysisError(outcome.error);
-      setAnalysisErrorRetryable(outcome.retryable);
-      setIsLoading(false);
-      return;
+      setAnalysisError(outcome.error); setAnalysisErrorRetryable(outcome.retryable);
+      setIsLoading(false); return;
     }
-
     setAnalysisResult(outcome.data);
-
-    // Save to Supabase so it appears on the dashboard (non-blocking if save fails)
     const saveOutcome = await saveAnalysisToDatabase({
-      cvText: extractedText,
-      jobRole: jobTitle,
-      atsScore: outcome.data.atsScore,
-      fullAnalysis: outcome.data,
+      cvText: extractedText, jobRole: jobTitle,
+      atsScore: outcome.data.atsScore, fullAnalysis: outcome.data,
     });
-
-    if (!saveOutcome.success) {
-      setSaveWarning(saveOutcome.error);
-    } else {
-      setSavedAnalysisId(saveOutcome.id);
-    }
-
+    if (!saveOutcome.success) setSaveWarning(saveOutcome.error);
+    else setSavedAnalysisId(saveOutcome.id);
     setIsLoading(false);
   }
 
-  const canAnalyze =
-    Boolean(extractedText?.trim()) &&
-    Boolean(jobDescription.trim()) &&
-    !isExtracting &&
-    !isLoading;
+  const canAnalyze = Boolean(extractedText?.trim()) && Boolean(jobDescription.trim()) && !isExtracting && !isLoading;
+
+  /* ── shared dark card style ── */
+  const card: React.CSSProperties = { background: "#141414", border: "1px solid #1e1e1e", borderRadius: "1rem" };
+  const label: React.CSSProperties = { fontSize: "0.85rem", fontWeight: 600, color: "#aaa", display: "block", marginBottom: "0.5rem" };
 
   return (
-    <div className="relative p-8">
-      {/* Full-page loading overlay while Gemini runs */}
+    <div className="relative min-h-screen" style={{ background: "#0f0f0f" }}>
+
+      {/* Background grid */}
+      <div className="fixed inset-0 pointer-events-none" style={{
+        backgroundImage: `linear-gradient(rgba(124,58,237,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(124,58,237,0.03) 1px,transparent 1px)`,
+        backgroundSize: "48px 48px",
+      }} />
+
+      {/* Purple glow */}
+      <div className="fixed top-0 right-0 pointer-events-none" style={{
+        width: "500px", height: "500px",
+        background: "radial-gradient(circle,rgba(124,58,237,0.08) 0%,transparent 70%)",
+      }} />
+
+      {/* Full-page loading overlay */}
       {isLoading && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-white/80 backdrop-blur-sm">
-          <Loader2 className="size-12 animate-spin text-primary" />
-          <p className="text-lg font-medium text-zinc-900">
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4"
+             style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}>
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+               style={{ background: "#7C3AED20", border: "1px solid #7C3AED40" }}>
+            <Loader2 className="w-8 h-8 animate-spin" style={{ color: "#7C3AED" }} />
+          </div>
+          <p style={{ fontSize: "1.1rem", fontWeight: 600, color: "white" }}>
             AI is analyzing your profile...
           </p>
+          <p style={{ fontSize: "0.9rem", color: "#666" }}>This usually takes 15–30 seconds</p>
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Resume Analyzer
-        </h1>
-        <Badge variant="secondary">ATS analysis</Badge>
-      </div>
+      <div className="relative max-w-3xl mx-auto px-6 py-10 sm:px-8">
 
-      <div className="flex max-w-3xl flex-col gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Target role</CardTitle>
-            <CardDescription>
-              Choose the job title you are applying for.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <label htmlFor="job-title" className="mb-2 block text-sm font-medium">
-              Job title
-            </label>
+        {/* Page header */}
+        <div className="mb-8">
+          <h1 style={{ fontSize: "clamp(1.8rem,4vw,2.4rem)", fontWeight: 800, color: "white", letterSpacing: "-0.03em" }}>
+            Resume Analyzer
+          </h1>
+          <p style={{ color: "#666", marginTop: "0.4rem", fontSize: "1rem" }}>
+            Upload your CV and paste the job description to get your ATS score
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-5">
+
+          {/* ── Job title ── */}
+          <div style={card} className="p-5">
+            <span style={label}>Target job title</span>
             <select
-              id="job-title"
               value={jobTitle}
               onChange={(e) => setJobTitle(e.target.value as JobTitle)}
               disabled={isLoading}
-              className="flex h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+              className="w-full rounded-xl px-3 py-2.5 text-sm outline-none disabled:opacity-50"
+              style={{ background: "#0f0f0f", border: "1px solid #2a2a2a", color: "white" }}
             >
-              {JOB_TITLES.map((title) => (
-                <option key={title} value={title}>
-                  {title}
-                </option>
-              ))}
+              {JOB_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
-          </CardContent>
-        </Card>
+          </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Upload your CV (PDF only)</CardTitle>
-            <CardDescription>
-              Drag a PDF here or click to browse. We extract the text so you can
-              confirm it looks correct.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div
-              {...getRootProps()}
-              className={cn(
-                "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors",
-                isDragActive && !isDragReject && "border-primary bg-primary/5",
-                isDragReject && "border-destructive bg-destructive/5",
-                !isDragActive &&
-                  !isDragReject &&
-                  "border-muted-foreground/30 hover:border-primary/50 hover:bg-muted/30",
-                (isExtracting || isLoading) &&
-                  "pointer-events-none opacity-60"
-              )}
-            >
-              <input {...getInputProps()} />
-              {isExtracting ? (
-                <>
-                  <Loader2 className="size-10 animate-spin text-muted-foreground" />
-                  <p className="text-sm font-medium">Extracting text from PDF…</p>
-                </>
-              ) : (
-                <>
-                  <Upload className="size-10 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">
-                      {isDragActive
-                        ? "Drop your PDF here"
-                        : "Drag & drop your CV here, or click to select"}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      PDF only · Max 10 MB
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
+          {/* ── CV Upload ── */}
+          <div style={card} className="p-5">
+            <span style={label}>Upload your CV (PDF only)</span>
 
-            {isDragReject && (
-              <p className="text-sm text-destructive">
-                Only PDF files are accepted.
-              </p>
-            )}
-
-            {uploadedFileName && (
-              <div className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm">
-                <span className="flex items-center gap-2 truncate">
-                  <FileText className="size-4 shrink-0" />
+            {!uploadedFileName ? (
+              <div
+                {...getRootProps()}
+                className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-all"
+                style={{
+                  borderColor: isDragActive ? "#7C3AED" : "#2a2a2a",
+                  background: isDragActive ? "rgba(124,58,237,0.05)" : "transparent",
+                }}
+              >
+                <input {...getInputProps()} />
+                {isExtracting ? (
+                  <>
+                    <Loader2 className="w-10 h-10 animate-spin" style={{ color: "#7C3AED" }} />
+                    <p style={{ color: "#aaa", fontSize: "0.9rem" }}>Extracting text from PDF…</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+                         style={{ background: "#7C3AED20" }}>
+                      <Upload className="w-6 h-6" style={{ color: "#7C3AED" }} />
+                    </div>
+                    <div>
+                      <p style={{ color: "white", fontWeight: 600, fontSize: "0.95rem" }}>
+                        {isDragActive ? "Drop your PDF here" : "Drag & drop your CV here"}
+                      </p>
+                      <p style={{ color: "#555", fontSize: "0.8rem", marginTop: "0.2rem" }}>
+                        or click to browse · PDF only · Max 10 MB
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
+                   style={{ background: "#0f0f0f", border: "1px solid #2a2a2a" }}>
+                <span className="flex items-center gap-2 truncate" style={{ color: "white", fontSize: "0.9rem" }}>
+                  <FileText className="w-4 h-4 shrink-0" style={{ color: "#7C3AED" }} />
                   {uploadedFileName}
                 </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleClearCv}
-                  disabled={isExtracting || isLoading}
-                >
-                  Remove
-                </Button>
+                <button onClick={handleClearCv} disabled={isExtracting || isLoading}
+                  className="shrink-0 rounded-lg p-1 transition-colors hover:bg-white/10"
+                  style={{ color: "#666" }}>
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             )}
 
-            {extractError && (
-              <p className="text-sm text-destructive" role="alert">
-                {extractError}
-              </p>
+            {isDragReject && (
+              <p style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }}>Only PDF files are accepted.</p>
             )}
-          </CardContent>
-        </Card>
+            {extractError && (
+              <p style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }} role="alert">{extractError}</p>
+            )}
+          </div>
 
-        {extractedText && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Extracted CV text</CardTitle>
-              <CardDescription>
-                Review the text below before running analysis.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-4 text-sm leading-relaxed">
+          {/* ── Extracted text preview ── */}
+          {extractedText && (
+            <div style={card} className="p-5">
+              <span style={label}>Extracted CV text — review before analyzing</span>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-xl p-4 text-sm leading-relaxed"
+                   style={{ background: "#0f0f0f", border: "1px solid #2a2a2a", color: "#ccc" }}>
                 {extractedText}
               </pre>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Job description</CardTitle>
-            <CardDescription>
-              Paste the job posting you want to match against.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <Textarea
-              id="job-description"
+          {/* ── Job description ── */}
+          <div style={card} className="p-5">
+            <span style={label}>Job description</span>
+            <textarea
               placeholder="Paste the full job description here…"
               rows={10}
               value={jobDescription}
               onChange={(e) => setJobDescription(e.target.value)}
               disabled={isLoading}
+              className="w-full rounded-xl px-4 py-3 text-sm leading-relaxed outline-none resize-none disabled:opacity-50"
+              style={{
+                background: "#0f0f0f", border: "1px solid #2a2a2a",
+                color: "white", fontFamily: "inherit",
+              }}
+              onFocus={(e) => (e.target.style.borderColor = "#7C3AED")}
+              onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
             />
-            <Button
-              type="button"
+
+            <button
               onClick={handleAnalyze}
               disabled={!canAnalyze}
-              className="w-full sm:w-auto"
+              className="mt-4 w-full py-3 rounded-xl font-semibold text-sm transition-all disabled:opacity-40 active:scale-[0.98]"
+              style={{ background: "#7C3AED", color: "white" }}
             >
               Analyze my CV
-            </Button>
+            </button>
+
             {analysisError && (
-              <div
-                role="alert"
-                className={cn(
-                  "rounded-lg border px-4 py-3 text-sm",
-                  analysisErrorRetryable
-                    ? "border-amber-200 bg-amber-50 text-amber-900"
-                    : "border-destructive/30 bg-destructive/10 text-destructive"
-                )}
-              >
-                <p className="font-medium">
-                  {analysisErrorRetryable ? "Service temporarily unavailable" : "Analysis failed"}
-                </p>
+              <div className="mt-3 rounded-xl px-4 py-3 text-sm" role="alert"
+                   style={{
+                     background: analysisErrorRetryable ? "#1a1500" : "#1a0000",
+                     border: `1px solid ${analysisErrorRetryable ? "#3a2e00" : "#3a0000"}`,
+                     color: analysisErrorRetryable ? "#fbbf24" : "#f87171",
+                   }}>
+                <p className="font-semibold">{analysisErrorRetryable ? "Service temporarily unavailable" : "Analysis failed"}</p>
                 <p className="mt-1">{analysisError}</p>
               </div>
             )}
+
             {saveWarning && (
-              <div
-                role="status"
-                className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-              >
+              <div className="mt-3 rounded-xl px-4 py-3 text-sm"
+                   style={{ background: "#1a1500", border: "1px solid #3a2e00", color: "#fbbf24" }}>
                 {saveWarning}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
 
-        {/* Results — shown after Gemini returns JSON */}
-        {analysisResult && !isLoading && (
-          <Card className="max-w-4xl">
-            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4">
-              <div>
-                <CardTitle>Analysis results</CardTitle>
-                <CardDescription>
-                  ATS score and recommendations powered by Gemini
-                </CardDescription>
+          {/* ── Results ── */}
+          {analysisResult && !isLoading && (
+            <div style={card} className="p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+                <div>
+                  <h2 style={{ fontWeight: 700, fontSize: "1.2rem", color: "white" }}>Analysis Results</h2>
+                  <p style={{ color: "#666", fontSize: "0.85rem", marginTop: "0.2rem" }}>Powered by Gemini AI</p>
+                </div>
+                {savedAnalysisId ? (
+                  <Link
+                    href={`/reports/${savedAnalysisId}`}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
+                    style={{ background: "#7C3AED", color: "white" }}
+                  >
+                    <FileBarChart className="w-4 h-4" /> Generate Report
+                  </Link>
+                ) : (
+                  <p style={{ fontSize: "0.8rem", color: "#555" }}>Sign in to save reports</p>
+                )}
               </div>
-              {savedAnalysisId ? (
-                <Link
-                  href={`/reports/${savedAnalysisId}`}
-                  className={cn(
-                    buttonVariants(),
-                    "no-print inline-flex shrink-0 items-center gap-2"
-                  )}
-                >
-                  <FileBarChart className="size-4" />
-                  Generate Report
-                </Link>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Sign in and save to generate a report
-                </p>
-              )}
-            </CardHeader>
-            <CardContent>
-              <Tabs defaultValue="overview">
-                <TabsList className="mb-4 flex h-auto w-full flex-wrap">
-                  <TabsTrigger value="overview">Overview</TabsTrigger>
-                  <TabsTrigger value="skills">Missing skills</TabsTrigger>
-                  <TabsTrigger value="improvements">Improvements</TabsTrigger>
-                  <TabsTrigger value="interview">Interview prep</TabsTrigger>
-                </TabsList>
 
-                <TabsContent value="overview" className="space-y-6">
-                  <div className="flex flex-wrap items-end gap-4">
-                    <p className="text-7xl font-bold tracking-tight">
-                      {Math.round(analysisResult.atsScore)}
-                    </p>
-                    <div className="mb-2 flex flex-col gap-2">
-                      <span className="text-sm font-medium text-muted-foreground">
-                        ATS Score
-                      </span>
-                      <Badge
-                        className={cn(
-                          "border px-3 py-1 text-sm",
-                          getScoreBadgeStyle(analysisResult.atsScore)
-                        )}
-                      >
-                        {getScoreLabel(analysisResult.atsScore)}
-                      </Badge>
-                    </div>
-                  </div>
-                  <p className="leading-relaxed text-muted-foreground">
-                    {analysisResult.explanation}
-                  </p>
-                </TabsContent>
+              {/* Tabs */}
+              <div>
+                {/* Tab buttons */}
+                {(() => {
+                  const tabs = ["overview", "skills", "improvements", "interview"] as const;
+                  const tabLabels = { overview: "Overview", skills: "Missing Skills", improvements: "Improvements", interview: "Interview Prep" };
+                  const [activeTab, setActiveTab] = useState<typeof tabs[number]>("overview");
 
-                <TabsContent value="skills" className="space-y-3">
-                  {analysisResult.missingSkills.length === 0 ? (
-                    <p className="text-muted-foreground">
-                      No major skill gaps identified.
-                    </p>
-                  ) : (
-                    analysisResult.missingSkills.map((skill) => (
-                      <div
-                        key={skill.name}
-                        className="flex items-center justify-between rounded-lg border px-4 py-3"
-                      >
-                        <span className="font-medium">{skill.name}</span>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            skill.importance === "high" &&
-                              "border-red-200 bg-red-50 text-red-700",
-                            skill.importance === "medium" &&
-                              "border-amber-200 bg-amber-50 text-amber-700",
-                            skill.importance === "low" &&
-                              "border-zinc-200 bg-zinc-50 text-zinc-700"
-                          )}
-                        >
-                          {skill.importance}
-                        </Badge>
+                  return (
+                    <>
+                      <div className="flex gap-2 flex-wrap mb-6">
+                        {tabs.map((t) => (
+                          <button key={t} onClick={() => setActiveTab(t)}
+                            className="px-4 py-2 rounded-xl text-sm font-medium transition-all"
+                            style={{
+                              background: activeTab === t ? "#7C3AED" : "#1a1a1a",
+                              color: activeTab === t ? "white" : "#777",
+                              border: `1px solid ${activeTab === t ? "#7C3AED" : "#2a2a2a"}`,
+                            }}>
+                            {tabLabels[t]}
+                          </button>
+                        ))}
                       </div>
-                    ))
-                  )}
-                </TabsContent>
 
-                <TabsContent value="improvements" className="space-y-4">
-                  {analysisResult.improvements.map((item, index) => (
-                    <Card key={index} size="sm">
-                      <CardHeader>
-                        <CardTitle className="text-base">
-                          {item.suggestion}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3 text-sm">
-                        <div>
-                          <p className="mb-1 font-medium text-muted-foreground">
-                            Before
-                          </p>
-                          <p className="rounded-md bg-red-50 p-3 text-red-900">
-                            {item.before}
-                          </p>
+                      {/* Overview */}
+                      {activeTab === "overview" && (
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap items-end gap-4">
+                            <p style={{ fontSize: "5rem", fontWeight: 900, color: "white", lineHeight: 1, letterSpacing: "-0.04em" }}>
+                              {Math.round(analysisResult.atsScore)}
+                            </p>
+                            <div className="mb-2 flex flex-col gap-2">
+                              <span style={{ fontSize: "0.8rem", color: "#666" }}>ATS Score</span>
+                              <span className={cn("rounded-full border px-3 py-1 text-sm font-medium", getScoreBadgeStyle(analysisResult.atsScore))}>
+                                {getScoreLabel(analysisResult.atsScore)}
+                              </span>
+                            </div>
+                          </div>
+                          <p style={{ color: "#888", lineHeight: 1.7, fontSize: "0.95rem" }}>{analysisResult.explanation}</p>
                         </div>
-                        <div>
-                          <p className="mb-1 font-medium text-muted-foreground">
-                            After
-                          </p>
-                          <p className="rounded-md bg-green-50 p-3 text-green-900">
-                            {item.after}
-                          </p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </TabsContent>
+                      )}
 
-                <TabsContent value="interview" className="space-y-4">
-                  {analysisResult.interviewQuestions.map((item, index) => (
-                    <Card key={index} size="sm">
-                      <CardHeader>
-                        <CardTitle className="text-base">
-                          Q{index + 1}. {item.question}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-sm leading-relaxed text-muted-foreground">
-                          <span className="font-medium text-foreground">
-                            Model answer:{" "}
-                          </span>
-                          {item.modelAnswer}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </Card>
-        )}
+                      {/* Skills */}
+                      {activeTab === "skills" && (
+                        <div className="space-y-3">
+                          {analysisResult.missingSkills.length === 0
+                            ? <p style={{ color: "#666" }}>No major skill gaps identified.</p>
+                            : analysisResult.missingSkills.map((skill) => (
+                                <div key={skill.name} className="flex items-center justify-between rounded-xl px-4 py-3"
+                                     style={{ background: "#0f0f0f", border: "1px solid #2a2a2a" }}>
+                                  <span style={{ fontWeight: 600, color: "white" }}>{skill.name}</span>
+                                  <span className={cn("rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                                    skill.importance === "high"   && "border-red-800 bg-red-950 text-red-400",
+                                    skill.importance === "medium" && "border-yellow-800 bg-yellow-950 text-yellow-400",
+                                    skill.importance === "low"    && "border-zinc-700 bg-zinc-900 text-zinc-400",
+                                  )}>
+                                    {skill.importance}
+                                  </span>
+                                </div>
+                              ))
+                          }
+                        </div>
+                      )}
+
+                      {/* Improvements */}
+                      {activeTab === "improvements" && (
+                        <div className="space-y-4">
+                          {analysisResult.improvements.map((item, i) => (
+                            <div key={i} className="rounded-xl p-4 space-y-3"
+                                 style={{ background: "#0f0f0f", border: "1px solid #2a2a2a" }}>
+                              <p style={{ fontWeight: 600, color: "white", fontSize: "0.95rem" }}>{item.suggestion}</p>
+                              <div className="rounded-lg p-3" style={{ background: "#1a0000", border: "1px solid #3a0000" }}>
+                                <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#f87171", marginBottom: "0.25rem" }}>BEFORE</p>
+                                <p style={{ fontSize: "0.85rem", color: "#fca5a5" }}>{item.before}</p>
+                              </div>
+                              <div className="rounded-lg p-3" style={{ background: "#001a00", border: "1px solid #003a00" }}>
+                                <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#4ade80", marginBottom: "0.25rem" }}>AFTER</p>
+                                <p style={{ fontSize: "0.85rem", color: "#86efac" }}>{item.after}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Interview */}
+                      {activeTab === "interview" && (
+                        <div className="space-y-4">
+                          {analysisResult.interviewQuestions.map((item, i) => (
+                            <div key={i} className="rounded-xl p-4"
+                                 style={{ background: "#0f0f0f", border: "1px solid #2a2a2a" }}>
+                              <p style={{ fontWeight: 600, color: "white", fontSize: "0.95rem", marginBottom: "0.75rem" }}>
+                                Q{i + 1}. {item.question}
+                              </p>
+                              <p style={{ fontSize: "0.85rem", color: "#888", lineHeight: 1.6 }}>
+                                <span style={{ color: "#7C3AED", fontWeight: 600 }}>Model answer: </span>
+                                {item.modelAnswer}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ export default function AppLayout({
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen" style={{ background: "#0f0f0f" }}>
 
       {/* ── Mobile top bar ── */}
       <div
@@ -41,7 +41,6 @@ export default function AppLayout({
       )}
 
       {/* ── Sidebar ── */}
-      {/* On mobile: slide in from left as a drawer. On desktop: always visible. */}
       <div
         className={`
           fixed top-0 left-0 h-full z-30 w-64 transition-transform duration-300
@@ -49,19 +48,17 @@ export default function AppLayout({
           ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
         `}
       >
-        <AppSidebar />
+        <AppSidebar onNavigate={() => setMobileOpen(false)} />
       </div>
 
-      {/* ── Main content ── */}
+      {/* ── Page content ── */}
       <main
-        className="flex-1 overflow-auto bg-white text-zinc-900 lg:ml-0"
-        style={{ paddingTop: "3.5rem" }}  /* offset for mobile top bar */
+        className="flex-1 overflow-auto"
+        style={{ paddingTop: "3.5rem" }}
       >
-        {/* Remove the top padding on desktop */}
         <style>{`@media (min-width: 1024px) { main { padding-top: 0; } }`}</style>
         {children}
       </main>
-
     </div>
   );
 }

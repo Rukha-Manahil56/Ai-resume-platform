@@ -1,289 +1,191 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  GEMINI_BUSY_MESSAGE,
-  type AnalyzeCvErrorResponse,
-} from "@/lib/gemini-errors";
+import { Loader2, Send, RotateCcw, Play } from "lucide-react";
+import { GEMINI_BUSY_MESSAGE, type AnalyzeCvErrorResponse } from "@/lib/gemini-errors";
 import type { InterviewMessage } from "@/lib/interview-types";
 import { JOB_TITLES, type JobTitle } from "@/lib/job-titles";
-import { cn } from "@/lib/utils";
 
-/** First question the interviewer always asks */
 const OPENING_QUESTION = "Tell me about yourself.";
 
 type InterviewOutcome =
   | { success: true; reply: string }
   | { success: false; error: string };
 
-/**
- * Create a unique id for each chat message (used as React key).
- */
 function createMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/**
- * Call our API route to get the interviewer's next reply.
- * Returns a result object instead of throwing so the UI never crashes.
- */
-async function fetchInterviewerReply(
-  jobRole: string,
-  messages: InterviewMessage[]
-): Promise<InterviewOutcome> {
+async function fetchInterviewerReply(jobRole: string, messages: InterviewMessage[]): Promise<InterviewOutcome> {
   try {
     const response = await fetch("/api/interview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jobRole, messages }),
     });
-
     let data: { reply?: string } & AnalyzeCvErrorResponse | null = null;
-
-    try {
-      data = await response.json();
-    } catch {
-      return {
-        success: false,
-        error: "Unexpected server response. Please try again.",
-      };
+    try { data = await response.json(); } catch {
+      return { success: false, error: "Unexpected server response. Please try again." };
     }
-
     if (!response.ok) {
-      return {
-        success: false,
-        error:
-          data?.error ??
-          (response.status === 503 || response.status === 429
-            ? GEMINI_BUSY_MESSAGE
-            : "Could not get a response. Please try again."),
-      };
+      return { success: false, error: data?.error ?? (response.status === 503 || response.status === 429 ? GEMINI_BUSY_MESSAGE : "Could not get a response. Please try again.") };
     }
-
-    if (!data?.reply?.trim()) {
-      return { success: false, error: "Empty reply from interviewer." };
-    }
-
+    if (!data?.reply?.trim()) return { success: false, error: "Empty reply from interviewer." };
     return { success: true, reply: data.reply };
   } catch {
     return { success: false, error: GEMINI_BUSY_MESSAGE };
   }
 }
 
-// Route: /mock-interview
 export default function MockInterviewPage() {
-  const [jobRole, setJobRole] = useState<JobTitle>(JOB_TITLES[0]);
-  const [messages, setMessages] = useState<InterviewMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [jobRole, setJobRole]               = useState<JobTitle>(JOB_TITLES[0]);
+  const [messages, setMessages]             = useState<InterviewMessage[]>([]);
+  const [input, setInput]                   = useState("");
+  const [isLoading, setIsLoading]           = useState(false);
+  const [error, setError]                   = useState<string | null>(null);
   const [interviewStarted, setInterviewStarted] = useState(false);
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatEndRef  = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  /**
-   * Scroll the chat to the newest message whenever the list updates.
-   */
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  /**
-   * Begin the interview with the standard opening question (no API call needed).
-   */
   function handleStartInterview() {
     setInterviewStarted(true);
     setError(null);
-    setMessages([
-      {
-        id: createMessageId(),
-        role: "assistant",
-        content: OPENING_QUESTION,
-      },
-    ]);
+    setMessages([{ id: createMessageId(), role: "assistant", content: OPENING_QUESTION }]);
     setInput("");
   }
 
-  /**
-   * Reset the chat so the user can pick a new role and start over.
-   */
   function handleResetInterview() {
     setInterviewStarted(false);
-    setMessages([]);
-    setInput("");
-    setError(null);
-    setIsLoading(false);
+    setMessages([]); setInput(""); setError(null); setIsLoading(false);
   }
 
-  /**
-   * Send the user's answer to the API and append the interviewer's reply.
-   */
   async function handleSendMessage() {
     const trimmed = input.trim();
     if (!trimmed || isLoading || !interviewStarted) return;
 
-    const userMessage: InterviewMessage = {
-      id: createMessageId(),
-      role: "user",
-      content: trimmed,
-    };
-
+    const userMessage: InterviewMessage = { id: createMessageId(), role: "user", content: trimmed };
     const historyWithUser = [...messages, userMessage];
-    setMessages(historyWithUser);
-    setInput("");
-    setError(null);
-    setIsLoading(true);
+    setMessages(historyWithUser); setInput(""); setError(null); setIsLoading(true);
 
     const outcome = await fetchInterviewerReply(jobRole, historyWithUser);
 
     if (!outcome.success) {
-      // Put the typed answer back so the user can retry without retyping
-      setMessages(messages);
-      setInput(trimmed);
-      setError(outcome.error);
-      setIsLoading(false);
-      return;
+      setMessages(messages); setInput(trimmed); setError(outcome.error); setIsLoading(false); return;
     }
 
-    setMessages([
-      ...historyWithUser,
-      {
-        id: createMessageId(),
-        role: "assistant",
-        content: outcome.reply,
-      },
-    ]);
+    setMessages([...historyWithUser, { id: createMessageId(), role: "assistant", content: outcome.reply }]);
     setIsLoading(false);
     textareaRef.current?.focus();
   }
 
-  /**
-   * Allow Enter to send (Shift+Enter adds a new line).
-   */
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void handleSendMessage();
-    }
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void handleSendMessage(); }
   }
 
   const canSend = interviewStarted && Boolean(input.trim()) && !isLoading;
 
   return (
-    <div className="flex min-h-[calc(100dvh-1rem)] flex-col gap-4 p-4 sm:p-6 lg:p-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Mock Interview
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Practice with an AI interviewer powered by Gemini
-        </p>
-      </div>
+    <div className="flex min-h-screen flex-col" style={{ background: "#0f0f0f" }}>
 
-      {/* Job role selector */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Interview role</CardTitle>
-          <CardDescription>
-            Questions will be tailored to this position
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="flex-1">
-            <label htmlFor="interview-role" className="sr-only">
-              Job role
-            </label>
+      {/* Background grid */}
+      <div className="fixed inset-0 pointer-events-none" style={{
+        backgroundImage: `linear-gradient(rgba(124,58,237,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(124,58,237,0.03) 1px,transparent 1px)`,
+        backgroundSize: "48px 48px",
+      }} />
+
+      {/* Purple glow */}
+      <div className="fixed bottom-0 left-64 pointer-events-none" style={{
+        width: "600px", height: "400px",
+        background: "radial-gradient(circle,rgba(124,58,237,0.06) 0%,transparent 70%)",
+      }} />
+
+      <div className="relative flex flex-col flex-1 max-w-3xl mx-auto w-full px-6 py-10 sm:px-8">
+
+        {/* Header */}
+        <div className="mb-6">
+          <h1 style={{ fontSize: "clamp(1.8rem,4vw,2.4rem)", fontWeight: 800, color: "white", letterSpacing: "-0.03em" }}>
+            Mock Interview
+          </h1>
+          <p style={{ color: "#666", marginTop: "0.4rem", fontSize: "1rem" }}>
+            Practice with an AI interviewer powered by Gemini
+          </p>
+        </div>
+
+        {/* Role selector + start/reset */}
+        <div className="rounded-2xl p-5 mb-5"
+             style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
+          <label style={{ fontSize: "0.85rem", fontWeight: 600, color: "#aaa", display: "block", marginBottom: "0.5rem" }}>
+            Interview role
+          </label>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <select
-              id="interview-role"
               value={jobRole}
               onChange={(e) => setJobRole(e.target.value as JobTitle)}
-              disabled={isLoading}
-              className="flex h-10 w-full rounded-lg border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+              disabled={isLoading || interviewStarted}
+              className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none disabled:opacity-50"
+              style={{ background: "#0f0f0f", border: "1px solid #2a2a2a", color: "white" }}
             >
-              {JOB_TITLES.map((title) => (
-                <option key={title} value={title}>
-                  {title}
-                </option>
-              ))}
+              {JOB_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
+
+            {!interviewStarted ? (
+              <button onClick={handleStartInterview}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90 active:scale-95"
+                style={{ background: "#7C3AED", color: "white", whiteSpace: "nowrap" }}>
+                <Play className="w-4 h-4" /> Start Interview
+              </button>
+            ) : (
+              <button onClick={handleResetInterview} disabled={isLoading}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90 disabled:opacity-40"
+                style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#aaa", whiteSpace: "nowrap" }}>
+                <RotateCcw className="w-4 h-4" /> New Interview
+              </button>
+            )}
           </div>
-          {!interviewStarted ? (
-            <Button type="button" onClick={handleStartInterview}>
-              Start interview
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleResetInterview}
-              disabled={isLoading}
-            >
-              New interview
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Chat area */}
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <CardHeader className="border-b py-3">
-          <CardTitle className="text-base">Interview chat</CardTitle>
-          {!interviewStarted && (
-            <CardDescription>
-              Select a role and tap Start interview to begin
-            </CardDescription>
-          )}
-        </CardHeader>
+        {/* Chat box */}
+        <div className="flex flex-col flex-1 rounded-2xl overflow-hidden"
+             style={{ background: "#141414", border: "1px solid #1e1e1e", minHeight: "500px" }}>
 
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-0 p-0">
-          <div
-            className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6"
-            aria-live="polite"
-            aria-label="Interview conversation"
-          >
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-4" aria-live="polite">
             {!interviewStarted && (
-              <p className="text-center text-sm text-muted-foreground">
-                Your conversation will appear here.
-              </p>
+              <div className="flex flex-col items-center justify-center h-full py-16 text-center gap-3">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                     style={{ background: "#7C3AED20", border: "1px solid #7C3AED30" }}>
+                  <Play className="w-6 h-6" style={{ color: "#7C3AED" }} />
+                </div>
+                <p style={{ color: "#555", fontSize: "0.9rem" }}>
+                  Select a role and click Start Interview to begin
+                </p>
+              </div>
             )}
 
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={cn(
-                  "flex w-full",
-                  message.role === "user" ? "justify-end" : "justify-start"
-                )}
-              >
+            {messages.map((msg) => (
+              <div key={msg.id} className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={cn(
-                    "max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed sm:max-w-[75%]",
-                    message.role === "user"
-                      ? "rounded-br-md bg-primary text-primary-foreground"
-                      : "rounded-bl-md bg-zinc-100 text-zinc-900"
-                  )}
+                  className="max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap"
+                  style={msg.role === "user"
+                    ? { background: "#7C3AED", color: "white", borderBottomRightRadius: "4px" }
+                    : { background: "#1e1e1e", color: "#ddd", borderBottomLeftRadius: "4px", border: "1px solid #2a2a2a" }
+                  }
                 >
-                  {message.content}
+                  {msg.content}
                 </div>
               </div>
             ))}
 
             {isLoading && (
               <div className="flex justify-start">
-                <div className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-zinc-100 px-4 py-3 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
+                <div className="flex items-center gap-2 rounded-2xl px-4 py-3 text-sm"
+                     style={{ background: "#1e1e1e", border: "1px solid #2a2a2a", color: "#666", borderBottomLeftRadius: "4px" }}>
+                  <Loader2 className="w-4 h-4 animate-spin" style={{ color: "#7C3AED" }} />
                   Interviewer is typing…
                 </div>
               </div>
@@ -292,50 +194,50 @@ export default function MockInterviewPage() {
             <div ref={chatEndRef} />
           </div>
 
+          {/* Error */}
           {error && (
-            <div
-              role="alert"
-              className="mx-4 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-            >
+            <div className="mx-4 mb-2 rounded-xl px-4 py-3 text-sm"
+                 style={{ background: "#1a1500", border: "1px solid #3a2e00", color: "#fbbf24" }}
+                 role="alert">
               {error}
             </div>
           )}
 
-          {/* Message input — fixed at bottom of the card */}
-          <div className="border-t bg-background p-3 sm:p-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <Textarea
+          {/* Input area */}
+          <div className="p-4" style={{ borderTop: "1px solid #1e1e1e" }}>
+            <div className="flex gap-3 items-end">
+              <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={
-                  interviewStarted
-                    ? "Type your answer… (Enter to send)"
-                    : "Start the interview to reply"
-                }
+                placeholder={interviewStarted ? "Type your answer… (Enter to send, Shift+Enter for new line)" : "Start the interview to reply"}
                 disabled={!interviewStarted || isLoading}
                 rows={2}
-                className="min-h-[44px] flex-1 resize-none"
+                className="flex-1 rounded-xl px-4 py-3 text-sm leading-relaxed resize-none outline-none disabled:opacity-40"
+                style={{
+                  background: "#0f0f0f",
+                  border: "1px solid #2a2a2a",
+                  color: "white",
+                  fontFamily: "inherit",
+                  minHeight: "52px",
+                }}
+                onFocus={(e) => (e.target.style.borderColor = "#7C3AED")}
+                onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
               />
-              <Button
-                type="button"
+              <button
                 onClick={() => void handleSendMessage()}
                 disabled={!canSend}
-                className="shrink-0 sm:px-6"
+                className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-all disabled:opacity-30 active:scale-95"
+                style={{ background: "#7C3AED", color: "white" }}
                 aria-label="Send message"
               >
-                {isLoading ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Send className="size-4" />
-                )}
-                <span className="ml-2 sm:hidden">Send</span>
-              </Button>
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
