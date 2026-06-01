@@ -1,10 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-/* Routes that require the user to be signed in */
 const PROTECTED = ["/dashboard", "/resume-analyzer", "/mock-interview", "/reports"];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -12,9 +11,13 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() { return request.cookies.getAll(); },
+        getAll() {
+          return request.cookies.getAll();
+        },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          );
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
@@ -24,13 +27,11 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  /* Refresh session — required for Server Components to read auth */
   const { data: { user } } = await supabase.auth.getUser();
-
   const { pathname } = request.nextUrl;
   const isProtected = PROTECTED.some((p) => pathname.startsWith(p));
 
-  /* Redirect logged-out users away from protected routes */
+  /* Logged-out user hits a protected route → send to login */
   if (isProtected && !user) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
@@ -38,8 +39,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  /* Redirect logged-in users away from login page */
-  if (pathname === "/login" && user) {
+  /* Logged-in user hits login page or landing page → send to dashboard */
+  if ((pathname === "/login" || pathname === "/") && user) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
