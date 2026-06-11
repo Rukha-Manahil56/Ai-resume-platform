@@ -14,15 +14,24 @@ import {
 import { JOB_TITLES, type JobTitle } from "@/lib/job-titles";
 import { saveAnalysisToDatabase } from "@/lib/save-analysis";
 
-/* ── API helpers — unchanged logic ── */
+/**
+ * Extract text from PDF entirely in the browser using pdfjs-dist.
+ * No server call needed — avoids all server-side PDF library issues.
+ */
 async function uploadAndExtractCv(file: File): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch("/api/extract-cv", { method: "POST", body: formData });
-  const data = (await res.json()) as { text?: string; error?: string };
-  if (!res.ok) throw new Error(data.error ?? "Failed to extract text from PDF.");
-  if (!data.text) throw new Error("No text was returned from the server.");
-  return data.text;
+  const { extractPdfTextInBrowser } = await import(
+    "@/lib/extract-pdf-client"
+  );
+
+  const text = await extractPdfTextInBrowser(file);
+
+  if (!text || text.length < 20) {
+    throw new Error(
+      "No readable text found in this PDF. Make sure it is not a scanned image."
+    );
+  }
+
+  return text;
 }
 
 type AnalyzeCvOutcome =
@@ -41,8 +50,14 @@ async function analyzeCv(payload: {
       body: JSON.stringify(payload),
     });
     let data: (CvAnalysisResult & AnalyzeCvErrorResponse) | null = null;
-    try { data = await res.json(); } catch {
-      return { success: false, error: "Unexpected server response.", retryable: true };
+    try {
+      data = await res.json();
+    } catch {
+      return {
+        success: false,
+        error: "Unexpected server response.",
+        retryable: true,
+      };
     }
     if (!res.ok) {
       return {
@@ -56,14 +71,17 @@ async function analyzeCv(payload: {
       };
     }
     if (typeof data?.atsScore !== "number")
-      return { success: false, error: "Unexpected analysis data.", retryable: true };
+      return {
+        success: false,
+        error: "Unexpected analysis data.",
+        retryable: true,
+      };
     return { success: true, data };
   } catch {
     return { success: false, error: GEMINI_BUSY_MESSAGE, retryable: true };
   }
 }
 
-/* ── Page ── */
 export default function ResumeAnalyzerPage() {
   const [jobTitle, setJobTitle]             = useState<JobTitle>(JOB_TITLES[0]);
   const [jobDescription, setJobDescription] = useState("");
@@ -81,64 +99,105 @@ export default function ResumeAnalyzerPage() {
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (!file) return;
-    setExtractError(null); setExtractedText(null); setAnalysisResult(null);
-    setAnalysisError(null); setSaveWarning(null); setSavedAnalysisId(null);
-    setUploadedFileName(file.name); setIsExtracting(true);
+    setExtractError(null);
+    setExtractedText(null);
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setSaveWarning(null);
+    setSavedAnalysisId(null);
+    setUploadedFileName(file.name);
+    setIsExtracting(true);
     try {
       setExtractedText(await uploadAndExtractCv(file));
     } catch (err) {
-      setExtractError(err instanceof Error ? err.message : "Something went wrong.");
+      setExtractError(
+        err instanceof Error ? err.message : "Something went wrong."
+      );
     } finally {
       setIsExtracting(false);
     }
   }, []);
 
-  const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
-    onDrop,
-    accept: { "application/pdf": [".pdf"] },
-    maxFiles: 1, multiple: false,
-    disabled: isExtracting || isLoading,
-  });
+  const { getRootProps, getInputProps, isDragActive, isDragReject } =
+    useDropzone({
+      onDrop,
+      accept: { "application/pdf": [".pdf"] },
+      maxFiles: 1,
+      multiple: false,
+      disabled: isExtracting || isLoading,
+    });
 
   function handleClearCv() {
-    setUploadedFileName(null); setExtractedText(null); setExtractError(null);
-    setAnalysisResult(null); setAnalysisError(null);
-    setSaveWarning(null); setSavedAnalysisId(null);
+    setUploadedFileName(null);
+    setExtractedText(null);
+    setExtractError(null);
+    setAnalysisResult(null);
+    setAnalysisError(null);
+    setSaveWarning(null);
+    setSavedAnalysisId(null);
   }
 
   async function handleAnalyze() {
-    if (!extractedText?.trim()) { setAnalysisError("Upload a CV PDF before analyzing."); return; }
-    if (!jobDescription.trim()) { setAnalysisError("Paste a job description before analyzing."); return; }
-    setIsLoading(true); setAnalysisError(null); setAnalysisRetryable(false);
-    setSaveWarning(null); setSavedAnalysisId(null); setAnalysisResult(null);
-
-    const outcome = await analyzeCv({ cvText: extractedText, jobRole: jobTitle, jobDescription });
-    if (!outcome.success) {
-      setAnalysisError(outcome.error); setAnalysisRetryable(outcome.retryable);
-      setIsLoading(false); return;
+    if (!extractedText?.trim()) {
+      setAnalysisError("Upload a CV PDF before analyzing.");
+      return;
     }
+    if (!jobDescription.trim()) {
+      setAnalysisError("Paste a job description before analyzing.");
+      return;
+    }
+    setIsLoading(true);
+    setAnalysisError(null);
+    setAnalysisRetryable(false);
+    setSaveWarning(null);
+    setSavedAnalysisId(null);
+    setAnalysisResult(null);
+
+    const outcome = await analyzeCv({
+      cvText: extractedText,
+      jobRole: jobTitle,
+      jobDescription,
+    });
+
+    if (!outcome.success) {
+      setAnalysisError(outcome.error);
+      setAnalysisRetryable(outcome.retryable);
+      setIsLoading(false);
+      return;
+    }
+
     setAnalysisResult(outcome.data);
 
     const saved = await saveAnalysisToDatabase({
-      cvText: extractedText, jobRole: jobTitle,
-      atsScore: outcome.data.atsScore, fullAnalysis: outcome.data,
+      cvText: extractedText,
+      jobRole: jobTitle,
+      atsScore: outcome.data.atsScore,
+      fullAnalysis: outcome.data,
     });
+
     if (!saved.success) setSaveWarning(saved.error);
     else setSavedAnalysisId(saved.id);
+
     setIsLoading(false);
   }
 
   const canAnalyze =
-    Boolean(extractedText?.trim()) && Boolean(jobDescription.trim()) &&
-    !isExtracting && !isLoading;
+    Boolean(extractedText?.trim()) &&
+    Boolean(jobDescription.trim()) &&
+    !isExtracting &&
+    !isLoading;
 
-  /* shared styles */
   const card: React.CSSProperties = {
-    background: "#141414", border: "1px solid #1e1e1e", borderRadius: "1rem",
+    background: "#141414",
+    border: "1px solid #1e1e1e",
+    borderRadius: "1rem",
   };
   const lbl: React.CSSProperties = {
-    fontSize: "0.85rem", fontWeight: 600, color: "#aaa",
-    display: "block", marginBottom: "0.5rem",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    color: "#aaa",
+    display: "block",
+    marginBottom: "0.5rem",
   };
 
   return (
@@ -161,24 +220,33 @@ export default function ResumeAnalyzerPage() {
 
       {/* Loading overlay */}
       {isLoading && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4"
-             style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}>
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-               style={{ background: "#7C3AED20", border: "1px solid #7C3AED40" }}>
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4"
+          style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}
+        >
+          <div
+            className="w-16 h-16 rounded-2xl flex items-center justify-center"
+            style={{ background: "#7C3AED20", border: "1px solid #7C3AED40" }}
+          >
             <Loader2 className="w-8 h-8 animate-spin" style={{ color: "#7C3AED" }} />
           </div>
           <p style={{ fontSize: "1.1rem", fontWeight: 600, color: "white" }}>
             AI is analyzing your profile...
           </p>
-          <p style={{ fontSize: "0.9rem", color: "#666" }}>This usually takes 15–30 seconds</p>
+          <p style={{ fontSize: "0.9rem", color: "#666" }}>
+            This usually takes 15–30 seconds
+          </p>
         </div>
       )}
 
       <div className="relative max-w-3xl mx-auto px-6 py-10 sm:px-8">
 
-        {/* Page header */}
+        {/* Header */}
         <div className="mb-8">
-          <h1 style={{ fontSize: "clamp(1.8rem,4vw,2.4rem)", fontWeight: 800, color: "white", letterSpacing: "-0.03em" }}>
+          <h1 style={{
+            fontSize: "clamp(1.8rem,4vw,2.4rem)",
+            fontWeight: 800, color: "white", letterSpacing: "-0.03em",
+          }}>
             Resume Analyzer
           </h1>
           <p style={{ color: "#666", marginTop: "0.4rem", fontSize: "1rem" }}>
@@ -188,7 +256,7 @@ export default function ResumeAnalyzerPage() {
 
         <div className="flex flex-col gap-5">
 
-          {/* ── Job title ── */}
+          {/* Job title */}
           <div style={card} className="p-5">
             <span style={lbl}>Target job title</span>
             <select
@@ -202,7 +270,7 @@ export default function ResumeAnalyzerPage() {
             </select>
           </div>
 
-          {/* ── CV Upload ── */}
+          {/* CV Upload */}
           <div style={card} className="p-5">
             <span style={lbl}>Upload your CV (PDF only)</span>
 
@@ -212,24 +280,35 @@ export default function ResumeAnalyzerPage() {
                 className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-all"
                 style={{
                   borderColor: isDragActive ? "#7C3AED" : "#2a2a2a",
-                  background:  isDragActive ? "rgba(124,58,237,0.05)" : "transparent",
+                  background: isDragActive
+                    ? "rgba(124,58,237,0.05)"
+                    : "transparent",
                 }}
               >
                 <input {...getInputProps()} />
                 {isExtracting ? (
                   <>
-                    <Loader2 className="w-10 h-10 animate-spin" style={{ color: "#7C3AED" }} />
-                    <p style={{ color: "#aaa", fontSize: "0.9rem" }}>Extracting text from PDF…</p>
+                    <Loader2
+                      className="w-10 h-10 animate-spin"
+                      style={{ color: "#7C3AED" }}
+                    />
+                    <p style={{ color: "#aaa", fontSize: "0.9rem" }}>
+                      Extracting text from PDF…
+                    </p>
                   </>
                 ) : (
                   <>
-                    <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                         style={{ background: "#7C3AED20" }}>
+                    <div
+                      className="w-12 h-12 rounded-xl flex items-center justify-center"
+                      style={{ background: "#7C3AED20" }}
+                    >
                       <Upload className="w-6 h-6" style={{ color: "#7C3AED" }} />
                     </div>
                     <div>
                       <p style={{ color: "white", fontWeight: 600, fontSize: "0.95rem" }}>
-                        {isDragActive ? "Drop your PDF here" : "Drag & drop your CV here"}
+                        {isDragActive
+                          ? "Drop your PDF here"
+                          : "Drag & drop your CV here"}
                       </p>
                       <p style={{ color: "#555", fontSize: "0.8rem", marginTop: "0.2rem" }}>
                         or click to browse · PDF only · Max 10 MB
@@ -239,16 +318,26 @@ export default function ResumeAnalyzerPage() {
                 )}
               </div>
             ) : (
-              <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
-                   style={{ background: "#0f0f0f", border: "1px solid #2a2a2a" }}>
-                <span className="flex items-center gap-2 truncate"
-                      style={{ color: "white", fontSize: "0.9rem" }}>
-                  <FileText className="w-4 h-4 shrink-0" style={{ color: "#7C3AED" }} />
+              <div
+                className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
+                style={{ background: "#0f0f0f", border: "1px solid #2a2a2a" }}
+              >
+                <span
+                  className="flex items-center gap-2 truncate"
+                  style={{ color: "white", fontSize: "0.9rem" }}
+                >
+                  <FileText
+                    className="w-4 h-4 shrink-0"
+                    style={{ color: "#7C3AED" }}
+                  />
                   {uploadedFileName}
                 </span>
-                <button onClick={handleClearCv} disabled={isExtracting || isLoading}
+                <button
+                  onClick={handleClearCv}
+                  disabled={isExtracting || isLoading}
                   className="shrink-0 rounded-lg p-1 transition-colors hover:bg-white/10"
-                  style={{ color: "#666" }}>
+                  style={{ color: "#666" }}
+                >
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -260,24 +349,33 @@ export default function ResumeAnalyzerPage() {
               </p>
             )}
             {extractError && (
-              <p style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }} role="alert">
+              <p
+                style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }}
+                role="alert"
+              >
                 {extractError}
               </p>
             )}
           </div>
 
-          {/* ── Extracted text preview ── */}
+          {/* Extracted text preview */}
           {extractedText && (
             <div style={card} className="p-5">
               <span style={lbl}>Extracted CV text — review before analyzing</span>
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-xl p-4 text-sm leading-relaxed"
-                   style={{ background: "#0f0f0f", border: "1px solid #2a2a2a", color: "#ccc" }}>
+              <pre
+                className="max-h-64 overflow-auto whitespace-pre-wrap rounded-xl p-4 text-sm leading-relaxed"
+                style={{
+                  background: "#0f0f0f",
+                  border: "1px solid #2a2a2a",
+                  color: "#ccc",
+                }}
+              >
                 {extractedText}
               </pre>
             </div>
           )}
 
-          {/* ── Job description ── */}
+          {/* Job description */}
           <div style={card} className="p-5">
             <span style={lbl}>Job description</span>
             <textarea
@@ -288,11 +386,13 @@ export default function ResumeAnalyzerPage() {
               disabled={isLoading}
               className="w-full rounded-xl px-4 py-3 text-sm leading-relaxed outline-none resize-none disabled:opacity-50"
               style={{
-                background: "#0f0f0f", border: "1px solid #2a2a2a",
-                color: "white", fontFamily: "inherit",
+                background: "#0f0f0f",
+                border: "1px solid #2a2a2a",
+                color: "white",
+                fontFamily: "inherit",
               }}
               onFocus={(e) => (e.target.style.borderColor = "#7C3AED")}
-              onBlur={(e)  => (e.target.style.borderColor = "#2a2a2a")}
+              onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
             />
 
             <button
@@ -305,21 +405,26 @@ export default function ResumeAnalyzerPage() {
             </button>
 
             {analysisError && (
-              <div className="mt-3 rounded-xl px-4 py-3 text-sm" role="alert"
-                   style={{
-                     background: analysisRetryable ? "#1a1500"   : "#1a0000",
-                     border:    `1px solid ${analysisRetryable ? "#3a2e00" : "#3a0000"}`,
-                     color:      analysisRetryable ? "#fbbf24"   : "#f87171",
-                   }}>
+              <div
+                className="mt-3 rounded-xl px-4 py-3 text-sm"
+                role="alert"
+                style={{
+                  background: analysisRetryable ? "#1a1500" : "#1a0000",
+                  border: `1px solid ${analysisRetryable ? "#3a2e00" : "#3a0000"}`,
+                  color: analysisRetryable ? "#fbbf24" : "#f87171",
+                }}
+              >
                 <p className="font-semibold">
-                  {analysisRetryable ? "Service temporarily unavailable" : "Analysis failed"}
+                  {analysisRetryable
+                    ? "Service temporarily unavailable"
+                    : "Analysis failed"}
                 </p>
                 <p className="mt-1">{analysisError}</p>
               </div>
             )}
           </div>
 
-          {/* ── Results ── */}
+          {/* Results */}
           {analysisResult && !isLoading && (
             <AnalysisResults
               result={analysisResult}

@@ -6,10 +6,9 @@ import { mapGeminiError } from "@/lib/map-gemini-error";
 
 export const runtime = "nodejs";
 
-/** Gemini model used for ATS analysis */
-const GEMINI_MODEL = "gemini-2.5-flash";
+/* Switched to 1.5-flash — higher free tier limits */
+const GEMINI_MODEL = "gemini-2.0-flash";
 
-/** JSON Schema sent to Gemini so the model returns predictable structure */
 const ANALYSIS_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
@@ -26,7 +25,7 @@ const ANALYSIS_RESPONSE_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          name: { type: "string" },
+          name:       { type: "string" },
           importance: { type: "string", enum: ["high", "medium", "low"] },
         },
         required: ["name", "importance"],
@@ -38,8 +37,8 @@ const ANALYSIS_RESPONSE_SCHEMA = {
         type: "object",
         properties: {
           suggestion: { type: "string" },
-          before: { type: "string" },
-          after: { type: "string" },
+          before:     { type: "string" },
+          after:      { type: "string" },
         },
         required: ["suggestion", "before", "after"],
       },
@@ -51,7 +50,7 @@ const ANALYSIS_RESPONSE_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          question: { type: "string" },
+          question:    { type: "string" },
           modelAnswer: { type: "string" },
         },
         required: ["question", "modelAnswer"],
@@ -69,9 +68,6 @@ const ANALYSIS_RESPONSE_SCHEMA = {
   ],
 } as const;
 
-/**
- * Build the system + user prompt that tells Gemini how to score the CV.
- */
 function buildAnalysisPrompt(
   cvText: string,
   jobRole: string,
@@ -95,9 +91,6 @@ CANDIDATE CV TEXT:
 ${cvText}`;
 }
 
-/**
- * Parse and validate the model's JSON so the client always gets safe data.
- */
 function parseAnalysisResult(raw: string): CvAnalysisResult {
   const parsed = JSON.parse(raw) as CvAnalysisResult;
 
@@ -105,42 +98,36 @@ function parseAnalysisResult(raw: string): CvAnalysisResult {
     typeof parsed.atsScore !== "number" ||
     parsed.atsScore < 0 ||
     parsed.atsScore > 100
-  ) {
-    throw new Error("Invalid atsScore in model response.");
-  }
+  ) throw new Error("Invalid atsScore in model response.");
 
-  if (typeof parsed.explanation !== "string" || !parsed.explanation.trim()) {
+  if (typeof parsed.explanation !== "string" || !parsed.explanation.trim())
     throw new Error("Invalid explanation in model response.");
-  }
 
-  if (!Array.isArray(parsed.missingSkills)) {
+  if (!Array.isArray(parsed.missingSkills))
     throw new Error("Invalid missingSkills in model response.");
-  }
 
-  if (!Array.isArray(parsed.improvements) || parsed.improvements.length !== 5) {
+  if (!Array.isArray(parsed.improvements) || parsed.improvements.length !== 5)
     throw new Error("Expected exactly 5 improvements.");
-  }
 
   if (
     !Array.isArray(parsed.interviewQuestions) ||
     parsed.interviewQuestions.length !== 8
-  ) {
-    throw new Error("Expected exactly 8 interview questions.");
-  }
+  ) throw new Error("Expected exactly 8 interview questions.");
 
   return parsed;
 }
 
-/**
- * POST /api/analyze-cv
- * Body: { cvText, jobRole, jobDescription }
- */
+/** Wait for a given number of milliseconds */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY is not configured on the server." },
+      { error: "AI service is not configured on the server." },
       { status: 500 }
     );
   }
@@ -152,8 +139,8 @@ export async function POST(request: NextRequest) {
       jobDescription?: string;
     };
 
-    const cvText = body.cvText?.trim();
-    const jobRole = body.jobRole?.trim();
+    const cvText         = body.cvText?.trim();
+    const jobRole        = body.jobRole?.trim();
     const jobDescription = body.jobDescription?.trim();
 
     if (!cvText) {
@@ -179,33 +166,53 @@ export async function POST(request: NextRequest) {
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: buildAnalysisPrompt(cvText, jobRole, jobDescription),
-      config: {
-        responseMimeType: "application/json",
-        responseJsonSchema: ANALYSIS_RESPONSE_SCHEMA,
-        temperature: 0.4,
-      },
-    });
+    /* ── Retry logic — up to 3 attempts on 429/503 ── */
+    let response;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = await ai.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: buildAnalysisPrompt(cvText, jobRole, jobDescription),
+          config: {
+            responseMimeType: "application/json",
+            responseJsonSchema: ANALYSIS_RESPONSE_SCHEMA,
+            temperature: 0.4,
+          },
+        });
+        break; /* success — exit retry loop */
+      } catch (err: unknown) {
+        lastError = err;
+        const status = (err as { status?: number })?.status;
+        if (status === 429 || status === 503) {
+          /* Wait 2s before first retry, 4s before second */
+          await sleep((attempt + 1) * 2000);
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!response) throw lastError;
 
     const text = response.text;
 
     if (!text) {
       return NextResponse.json(
-        { error: "Gemini returned an empty response." },
+        { error: "AI returned an empty response." },
         { status: 502 }
       );
     }
 
     const result = parseAnalysisResult(text);
-
     return NextResponse.json(result);
+
   } catch (error) {
     console.error("[analyze-cv]", error);
     const { status, body } = mapGeminiError(
       error,
-      "Failed to analyze CV. Please try again.",
+      "Analysis failed. The AI is busy — please wait a moment and try again.",
       GEMINI_MODEL
     );
     return NextResponse.json(body, { status });
