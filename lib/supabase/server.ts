@@ -1,6 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-
 /**
  * Supabase client for Server Components and Route Handlers.
  * Reads the user's session from cookies set during login.

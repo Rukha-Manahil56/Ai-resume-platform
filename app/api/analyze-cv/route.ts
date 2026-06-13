@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-
+import Groq from "groq-sdk";
+import { createClient } from "@/lib/supabase/server";
 import type { CvAnalysisResult } from "@/lib/analysis-types";
 import { mapGeminiError } from "@/lib/map-gemini-error";
+import { createHash } from "crypto";
 
 export const runtime = "nodejs";
 
-/* Switched to 1.5-flash — higher free tier limits */
-const GEMINI_MODEL = "gemini-2.0-flash";
+/* ── Models ── */
+const GEMINI_MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"];
+const GROQ_MODEL    = "llama-3.3-70b-versatile";
 
+/* ── Response schema for Gemini ── */
 const ANALYSIS_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
-    atsScore: {
-      type: "number",
-      description: "ATS match score from 0 to 100",
-    },
-    explanation: {
-      type: "string",
-      description: "One paragraph explaining the score",
-    },
+    atsScore:    { type: "number", description: "ATS match score 0–100" },
+    explanation: { type: "string", description: "One paragraph explaining the score" },
     missingSkills: {
       type: "array",
       items: {
@@ -60,19 +58,31 @@ const ANALYSIS_RESPONSE_SCHEMA = {
     },
   },
   required: [
-    "atsScore",
-    "explanation",
-    "missingSkills",
-    "improvements",
-    "interviewQuestions",
+    "atsScore", "explanation", "missingSkills",
+    "improvements", "interviewQuestions",
   ],
 } as const;
 
-function buildAnalysisPrompt(
-  cvText: string,
-  jobRole: string,
-  jobDescription: string
-): string {
+/* ── Helpers ── */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryable(error: unknown): boolean {
+  const status  = (error as { status?: number })?.status;
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    status === 429 ||
+    status === 503 ||
+    message.includes("overloaded") ||
+    message.includes("unavailable") ||
+    message.includes("resource exhausted") ||
+    message.includes("too many requests") ||
+    message.includes("quota")
+  );
+}
+
+function buildPrompt(cvText: string, jobRole: string, jobDescription: string): string {
   return `You are an advanced Applicant Tracking System (ATS) engine.
 
 Analyze how well the candidate's CV matches the target role and job description.
@@ -91,41 +101,185 @@ CANDIDATE CV TEXT:
 ${cvText}`;
 }
 
-function parseAnalysisResult(raw: string): CvAnalysisResult {
+function parseResult(raw: string): CvAnalysisResult {
   const parsed = JSON.parse(raw) as CvAnalysisResult;
 
-  if (
-    typeof parsed.atsScore !== "number" ||
-    parsed.atsScore < 0 ||
-    parsed.atsScore > 100
-  ) throw new Error("Invalid atsScore in model response.");
+  if (typeof parsed.atsScore !== "number" || parsed.atsScore < 0 || parsed.atsScore > 100)
+    throw new Error("Invalid atsScore.");
 
   if (typeof parsed.explanation !== "string" || !parsed.explanation.trim())
-    throw new Error("Invalid explanation in model response.");
+    throw new Error("Invalid explanation.");
 
   if (!Array.isArray(parsed.missingSkills))
-    throw new Error("Invalid missingSkills in model response.");
+    throw new Error("Invalid missingSkills.");
 
   if (!Array.isArray(parsed.improvements) || parsed.improvements.length !== 5)
     throw new Error("Expected exactly 5 improvements.");
 
-  if (
-    !Array.isArray(parsed.interviewQuestions) ||
-    parsed.interviewQuestions.length !== 8
-  ) throw new Error("Expected exactly 8 interview questions.");
+  if (!Array.isArray(parsed.interviewQuestions) || parsed.interviewQuestions.length !== 8)
+    throw new Error("Expected exactly 8 interview questions.");
 
   return parsed;
 }
 
-/** Wait for a given number of milliseconds */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Generate a short cache key from CV text + job role + job description.
+ * Same inputs = same key = instant cached result.
+ */
+function makeCacheKey(cvText: string, jobRole: string, jobDescription: string): string {
+  return createHash("sha256")
+    .update(`${cvText}||${jobRole}||${jobDescription}`)
+    .digest("hex")
+    .slice(0, 32); // 32 chars is enough
 }
 
-export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY;
+/* ── Step 1: Check Supabase cache ── */
+async function checkCache(cacheKey: string): Promise<CvAnalysisResult | null> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("analysis_cache")
+      .select("result")
+      .eq("cache_key", cacheKey)
+      .single();
 
+    if (error || !data) return null;
+    console.log("[analyze-cv] Cache hit — returning cached result");
+    return data.result as CvAnalysisResult;
+  } catch {
+    // Cache miss or table doesn't exist yet — continue normally
+    return null;
+  }
+}
+
+/* ── Step 5: Save result to Supabase cache ── */
+async function saveToCache(
+  cacheKey: string,
+  cvText: string,
+  jobRole: string,
+  result: CvAnalysisResult
+): Promise<void> {
+  try {
+    const supabase = await createClient();
+    await supabase.from("analysis_cache").upsert({
+      cache_key:  cacheKey,
+      job_role:   jobRole,
+      cv_preview: cvText.slice(0, 200), // first 200 chars for reference
+      result,
+      created_at: new Date().toISOString(),
+    });
+    console.log("[analyze-cv] Result saved to cache");
+  } catch (err) {
+    // Non-critical — if cache save fails, the user still gets their result
+    console.warn("[analyze-cv] Cache save failed (non-critical):", err);
+  }
+}
+
+/* ── Steps 2 & 3: Try Gemini keys ── */
+async function tryGemini(
+  prompt: string,
+  apiKey: string,
+  keyLabel: string
+): Promise<CvAnalysisResult | null> {
+  const ai = new GoogleGenAI({ apiKey });
+
+  for (const modelName of GEMINI_MODELS) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        console.log(`[analyze-cv] ${keyLabel} — model ${modelName}, attempt ${attempt + 1}`);
+
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseJsonSchema: ANALYSIS_RESPONSE_SCHEMA,
+            temperature: 0.4,
+          },
+        });
+
+        const text = response.text;
+        if (!text) throw new Error("Empty response from AI.");
+
+        const result = parseResult(text);
+        console.log(`[analyze-cv] Success — ${keyLabel}, model ${modelName}`);
+        return result;
+
+      } catch (err) {
+        if (isRetryable(err)) {
+          console.warn(`[analyze-cv] ${keyLabel} ${modelName} busy, retrying ${attempt + 1}/3`);
+          await sleep((attempt + 1) * 2000);
+          continue;
+        }
+        // Non-retryable error for this model — try next model
+        console.warn(`[analyze-cv] ${keyLabel} ${modelName} failed:`, err);
+        break;
+      }
+    }
+  }
+
+  return null; // all models on this key failed
+}
+
+/* ── Step 4: Groq fallback ── */
+async function tryGroq(
+  cvText: string,
+  jobRole: string,
+  jobDescription: string
+): Promise<CvAnalysisResult | null> {
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
+    console.warn("[analyze-cv] GROQ_API_KEY not configured — skipping Groq fallback");
+    return null;
+  }
+
+  try {
+    console.log("[analyze-cv] Trying Groq fallback");
+    const groq = new Groq({ apiKey });
+
+    const prompt = `${buildPrompt(cvText, jobRole, jobDescription)}
+
+IMPORTANT: Return ONLY a valid JSON object. No markdown, no code blocks, no explanation.
+The JSON must have exactly these fields:
+- atsScore: number (0-100)
+- explanation: string (one paragraph)
+- missingSkills: array of {name: string, importance: "high"|"medium"|"low"}
+- improvements: array of exactly 5 {suggestion: string, before: string, after: string}
+- interviewQuestions: array of exactly 8 {question: string, modelAnswer: string}`;
+
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.4,
+      max_tokens: 4096,
+    });
+
+    const text = completion.choices[0]?.message?.content;
+    if (!text) throw new Error("Empty response from Groq");
+
+    // Strip markdown code blocks if Groq adds them
+    const cleaned = text
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/,      "")
+      .replace(/\s*```$/,      "")
+      .trim();
+
+    const result = parseResult(cleaned);
+    console.log("[analyze-cv] Groq fallback success");
+    return result;
+
+  } catch (err) {
+    console.error("[analyze-cv] Groq fallback failed:", err);
+    return null;
+  }
+}
+
+/* ── Main handler ── */
+export async function POST(request: NextRequest) {
+  const geminiKey1 = process.env.GEMINI_API_KEY;
+  const geminiKey2 = process.env.GEMINI_API_KEY_2;
+
+  if (!geminiKey1) {
     return NextResponse.json(
       { error: "AI service is not configured on the server." },
       { status: 500 }
@@ -149,14 +303,12 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
     if (!jobRole) {
       return NextResponse.json(
         { error: "Job role is required." },
         { status: 400 }
       );
     }
-
     if (!jobDescription) {
       return NextResponse.json(
         { error: "Job description is required." },
@@ -164,56 +316,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const prompt   = buildPrompt(cvText, jobRole, jobDescription);
+    const cacheKey = makeCacheKey(cvText, jobRole, jobDescription);
 
-    /* ── Retry logic — up to 3 attempts on 429/503 ── */
-    let response;
-    let lastError: unknown;
-
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        response = await ai.models.generateContent({
-          model: GEMINI_MODEL,
-          contents: buildAnalysisPrompt(cvText, jobRole, jobDescription),
-          config: {
-            responseMimeType: "application/json",
-            responseJsonSchema: ANALYSIS_RESPONSE_SCHEMA,
-            temperature: 0.4,
-          },
-        });
-        break; /* success — exit retry loop */
-      } catch (err: unknown) {
-        lastError = err;
-        const status = (err as { status?: number })?.status;
-        if (status === 429 || status === 503) {
-          /* Wait 2s before first retry, 4s before second */
-          await sleep((attempt + 1) * 2000);
-          continue;
-        }
-        throw err;
-      }
+    /* ── Step 1: Check cache ── */
+    const cached = await checkCache(cacheKey);
+    if (cached) {
+      return NextResponse.json({ ...cached, fromCache: true });
     }
 
-    if (!response) throw lastError;
+    /* ── Step 2: Try Gemini key 1 ── */
+    let result = await tryGemini(prompt, geminiKey1, "Gemini key 1");
 
-    const text = response.text;
+    /* ── Step 3: Try Gemini key 2 ── */
+    if (!result && geminiKey2) {
+      result = await tryGemini(prompt, geminiKey2, "Gemini key 2");
+    }
 
-    if (!text) {
+    /* ── Step 4: Try Groq fallback ── */
+    if (!result) {
+      result = await tryGroq(cvText, jobRole, jobDescription);
+    }
+
+    /* ── All providers failed ── */
+    if (!result) {
       return NextResponse.json(
-        { error: "AI returned an empty response." },
-        { status: 502 }
+        {
+          error:
+            "Our AI service is experiencing very high demand right now. Please wait 30 seconds and try again.",
+          retryable: true,
+        },
+        { status: 503 }
       );
     }
 
-    const result = parseAnalysisResult(text);
+    /* ── Step 5: Save to cache ── */
+    void saveToCache(cacheKey, cvText, jobRole, result);
+
     return NextResponse.json(result);
 
   } catch (error) {
     console.error("[analyze-cv]", error);
     const { status, body } = mapGeminiError(
       error,
-      "Analysis failed. The AI is busy — please wait a moment and try again.",
-      GEMINI_MODEL
+      "Analysis failed. Please try again in a moment.",
+      GEMINI_MODELS[0]
     );
     return NextResponse.json(body, { status });
   }

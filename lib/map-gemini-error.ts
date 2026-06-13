@@ -11,6 +11,7 @@ import {
  */
 function isGeminiUnavailableError(status: number, message: string): boolean {
   const lower = message.toLowerCase();
+  console.warn("[Gemini] Service temporarily unavailable.");
   return (
     status === 503 ||
     lower.includes("unavailable") ||
@@ -25,6 +26,7 @@ function isGeminiUnavailableError(status: number, message: string): boolean {
  */
 function isGeminiRateLimitError(status: number, message: string): boolean {
   const lower = message.toLowerCase();
+  console.warn("[Gemini] Rate limit reached.");
   return (
     status === 429 ||
     lower.includes("rate limit") ||
@@ -49,7 +51,7 @@ export function mapGeminiError(
       return {
         status: 503,
         body: {
-          error: GEMINI_BUSY_MESSAGE,
+          error:  "Our AI service is experiencing high demand right now. We're automatically retrying your request. If the issue persists, please try again in a few moments.",
           code: GEMINI_UNAVAILABLE_CODE,
           retryable: true,
         },
@@ -60,7 +62,7 @@ export function mapGeminiError(
       return {
         status: 429,
         body: {
-          error: GEMINI_BUSY_MESSAGE,
+          error:  "Our AI service is experiencing high demand right now. We're automatically retrying your request. If the issue persists, please try again in a few moments.",
           code: GEMINI_UNAVAILABLE_CODE,
           retryable: true,
         },
@@ -82,7 +84,7 @@ export function mapGeminiError(
       return {
         status: 502,
         body: {
-          error: `Model "${modelName}" is not available. Verify the model name in your Google AI project.`,
+          error: "Something unexpected happened while communicating with the AI service. Please try again later.",
           retryable: false,
         },
       };
@@ -91,7 +93,7 @@ export function mapGeminiError(
     return {
       status: status >= 400 && status < 600 ? status : 500,
       body: {
-        error: `Gemini request failed: ${message}`,
+        error: "Something unexpected happened while communicating with the AI service. Please try again later.",
         retryable: status >= 500,
       },
     };
@@ -101,7 +103,7 @@ export function mapGeminiError(
     return {
       status: 502,
       body: {
-        error: "Received invalid JSON from the AI. Please try again.",
+        error: "Something unexpected happened while communicating with the AI service. Please try again later.",
         retryable: true,
       },
     };
@@ -118,7 +120,7 @@ export function mapGeminiError(
       return {
         status: 503,
         body: {
-          error: GEMINI_BUSY_MESSAGE,
+          error:  "Our AI service is experiencing high demand right now. We're automatically retrying your request. If the issue persists, please try again in a few moments.",
           code: GEMINI_UNAVAILABLE_CODE,
           retryable: true,
         },
@@ -127,12 +129,12 @@ export function mapGeminiError(
 
     return {
       status: 500,
-      body: { error: error.message, retryable: false },
+      body: { error: "Something unexpected happened while communicating with the AI service. Please try again later.", retryable: false },
     };
   }
 
   return {
     status: 500,
-    body: { error: fallbackMessage, retryable: true },
+    body: { error: "Something unexpected happened while communicating with the AI service. Please try again later.", retryable: true },
   };
 }
