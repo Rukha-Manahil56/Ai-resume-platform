@@ -368,6 +368,7 @@ export default function ResumeAnalyzerPage() {
             result={analysisResult}
             savedAnalysisId={savedAnalysisId}
             saveWarning={saveWarning}
+            jobRole={jobTitle}
           />
 
           {/* Bottom reset */}
