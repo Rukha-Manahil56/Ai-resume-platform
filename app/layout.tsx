@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI Resume Platform",
+  title: "CareerLens",
   description: "Analyze resumes, practice interviews, and track your progress",
 };
 

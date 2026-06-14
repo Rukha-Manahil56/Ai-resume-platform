@@ -3,8 +3,8 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import {
-  FileText, Loader2, Upload, X, Plus,
-  CheckCircle2, RotateCcw, ChevronRight,
+  FileText, Upload, X, Plus,
+  CheckCircle2, RotateCcw, ChevronRight, AlertCircle,
 } from "lucide-react";
 
 import { AnalysisResults } from "@/components/analysis-results";
@@ -22,9 +22,7 @@ async function uploadAndExtractCv(file: File): Promise<string> {
   const { extractPdfTextInBrowser } = await import("@/lib/extract-pdf-client");
   const text = await extractPdfTextInBrowser(file);
   if (!text || text.length < 20) {
-    throw new Error(
-      "No readable text found in this PDF. Make sure it is not a scanned image."
-    );
+    throw new Error("No readable text found in this PDF. Make sure it is not a scanned image.");
   }
   return text;
 }
@@ -45,9 +43,7 @@ async function analyzeCv(payload: {
       body: JSON.stringify(payload),
     });
     let data: (CvAnalysisResult & AnalyzeCvErrorResponse) | null = null;
-    try {
-      data = await res.json();
-    } catch {
+    try { data = await res.json(); } catch {
       return { success: false, error: "Unexpected server response.", retryable: true };
     }
     if (!res.ok) {
@@ -71,11 +67,155 @@ async function analyzeCv(payload: {
 
 /* ── Loading steps ── */
 const LOADING_STEPS = [
-  "Extracting resume content...",
-  "Matching skills with job requirements...",
-  "Generating improvement suggestions...",
-  "Preparing interview questions...",
+  { label: "Extracting resume content",            desc: "Reading and parsing your PDF"                    },
+  { label: "Understanding job requirements",        desc: "Analysing the job description"                   },
+  { label: "Comparing skills with role expectations", desc: "Identifying gaps and matches"                  },
+  { label: "Generating resume improvements",        desc: "Creating tailored suggestions"                   },
+  { label: "Preparing interview questions",         desc: "Building role-specific questions"                },
+  { label: "Building final report",                 desc: "Assembling your career readiness report"         },
 ];
+
+/* ── Loading overlay component ── */
+function LoadingOverlay({ currentStep }: { currentStep: number }) {
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 50,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "rgba(249,249,249,0.94)",
+        backdropFilter: "blur(12px)",
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: "440px", padding: "0 24px" }}>
+
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: "36px" }}>
+          {/* Spinner */}
+          <div
+            style={{
+              width: "44px", height: "44px",
+              border: "2.5px solid #e8e8e8",
+              borderTop: "2.5px solid #0a0a0a",
+              borderRadius: "50%",
+              margin: "0 auto 20px",
+              animation: "spin 0.75s linear infinite",
+            }}
+          />
+          <h2 style={{ fontSize: "17px", fontWeight: 700, color: "#0a0a0a", letterSpacing: "-0.02em", marginBottom: "6px" }}>
+            Analysing your resume
+          </h2>
+          <p style={{ fontSize: "13px", color: "#aaa" }}>This usually takes 15–30 seconds</p>
+        </div>
+
+        {/* Steps */}
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid #e8e8e8",
+            borderRadius: "14px",
+            padding: "8px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "2px",
+          }}
+        >
+          {LOADING_STEPS.map((step, i) => {
+            const done   = i < currentStep;
+            const active = i === currentStep;
+            const future = i > currentStep;
+
+            return (
+              <div
+                key={step.label}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "11px 14px",
+                  borderRadius: "10px",
+                  background: active ? "#f5f5f5" : "transparent",
+                  transition: "background 0.3s",
+                }}
+              >
+                {/* Step indicator */}
+                <div style={{ flexShrink: 0, width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {done ? (
+                    <CheckCircle2 size={18} style={{ color: "#22c55e" }} />
+                  ) : active ? (
+                    <div
+                      style={{
+                        width: "18px", height: "18px",
+                        border: "2px solid #e0e0e0",
+                        borderTop: "2px solid #0a0a0a",
+                        borderRadius: "50%",
+                        animation: "spin 0.75s linear infinite",
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: "18px", height: "18px",
+                        borderRadius: "50%",
+                        border: "1.5px solid #e0e0e0",
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Label */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p
+                    style={{
+                      fontSize: "13px",
+                      fontWeight: active ? 600 : done ? 500 : 400,
+                      color: done ? "#aaa" : active ? "#0a0a0a" : "#ccc",
+                      lineHeight: 1.3,
+                      transition: "color 0.3s, font-weight 0.3s",
+                    }}
+                  >
+                    {step.label}
+                  </p>
+                  {active && (
+                    <p style={{ fontSize: "11.5px", color: "#bbb", marginTop: "2px", lineHeight: 1.3 }}>
+                      {step.desc}
+                    </p>
+                  )}
+                </div>
+
+                {/* Done checkmark text */}
+                {done && (
+                  <span style={{ fontSize: "11px", color: "#bbb", flexShrink: 0 }}>Done</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ marginTop: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+            <span style={{ fontSize: "11.5px", color: "#bbb" }}>Progress</span>
+            <span style={{ fontSize: "11.5px", color: "#bbb" }}>
+              {Math.round((currentStep / LOADING_STEPS.length) * 100)}%
+            </span>
+          </div>
+          <div style={{ height: "3px", background: "#eee", borderRadius: "2px", overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${(currentStep / LOADING_STEPS.length) * 100}%`,
+                background: "#0a0a0a",
+                borderRadius: "2px",
+                transition: "width 0.5s ease",
+              }}
+            />
+          </div>
+        </div>
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
 
 /* ── Page ── */
 export default function ResumeAnalyzerPage() {
@@ -163,10 +303,10 @@ export default function ResumeAnalyzerPage() {
     setSavedAnalysisId(null);
     setAnalysisResult(null);
 
-    /* Cycle loading steps visually */
+    /* Cycle through steps — each step ~4s, stops at second-to-last */
     let step = 0;
     const stepInterval = setInterval(() => {
-      step = Math.min(step + 1, LOADING_STEPS.length - 1);
+      step = Math.min(step + 1, LOADING_STEPS.length - 2);
       setLoadingStep(step);
     }, 4000);
 
@@ -182,8 +322,13 @@ export default function ResumeAnalyzerPage() {
       setAnalysisError(outcome.error);
       setAnalysisRetryable(outcome.retryable);
       setIsLoading(false);
+      setLoadingStep(0);
       return;
     }
+
+    /* Flash final step briefly before showing results */
+    setLoadingStep(LOADING_STEPS.length - 1);
+    await new Promise((r) => setTimeout(r, 600));
 
     setAnalysisResult(outcome.data);
 
@@ -207,163 +352,59 @@ export default function ResumeAnalyzerPage() {
     !isExtracting &&
     !isLoading;
 
-  /* Derive step state */
-  const step1Done = Boolean(extractedText);
-  const step2Done = Boolean(jobDescription.trim());
+  const step1Done  = Boolean(extractedText);
+  const step2Done  = Boolean(jobDescription.trim());
   const activeStep = !step1Done ? 1 : !step2Done ? 2 : 3;
 
   return (
     <div
-      className="min-h-screen"
-      style={{ background: "#f9f9f9", fontFamily: "var(--font-geist-sans), system-ui, sans-serif" }}
+      style={{
+        minHeight: "100vh",
+        background: "#f9f9f9",
+        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+      }}
     >
-
-      {/* ── Loading overlay ── */}
-      {isLoading && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center"
-          style={{ background: "rgba(255,255,255,0.92)", backdropFilter: "blur(12px)" }}
-        >
-          <div style={{ width: "320px", textAlign: "center" }}>
-            {/* Spinner */}
-            <div
-              style={{
-                width: "52px",
-                height: "52px",
-                border: "2px solid #e8e8e8",
-                borderTop: "2px solid #0a0a0a",
-                borderRadius: "50%",
-                margin: "0 auto 32px",
-                animation: "spin 0.8s linear infinite",
-              }}
-            />
-            {/* Steps */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              {LOADING_STEPS.map((s, i) => {
-                const done    = i < loadingStep;
-                const active  = i === loadingStep;
-                return (
-                  <div
-                    key={s}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      padding: "10px 14px",
-                      borderRadius: "10px",
-                      background: active ? "#fff" : "transparent",
-                      border: active ? "1px solid #e4e4e4" : "1px solid transparent",
-                      boxShadow: active ? "0 2px 8px rgba(0,0,0,0.05)" : "none",
-                      transition: "all 0.3s",
-                    }}
-                  >
-                    <div style={{ flexShrink: 0 }}>
-                      {done ? (
-                        <CheckCircle2 size={16} style={{ color: "#2d7a4f" }} />
-                      ) : active ? (
-                        <div
-                          style={{
-                            width: "16px", height: "16px",
-                            border: "2px solid #ccc",
-                            borderTop: "2px solid #0a0a0a",
-                            borderRadius: "50%",
-                            animation: "spin 0.8s linear infinite",
-                          }}
-                        />
-                      ) : (
-                        <div style={{ width: "16px", height: "16px", borderRadius: "50%", border: "1px solid #ddd" }} />
-                      )}
-                    </div>
-                    <span style={{
-                      fontSize: "13.5px",
-                      fontWeight: active ? 550 : 400,
-                      color: done ? "#888" : active ? "#0a0a0a" : "#bbb",
-                      textAlign: "left",
-                    }}>
-                      {s}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            <p style={{ fontSize: "12px", color: "#bbb", marginTop: "24px" }}>
-              Usually takes 15–30 seconds
-            </p>
-          </div>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        </div>
-      )}
+      {/* Loading overlay */}
+      {isLoading && <LoadingOverlay currentStep={loadingStep} />}
 
       {/* ── Results view ── */}
       {analysisResult && !isLoading && (
         <div style={{ maxWidth: "900px", margin: "0 auto", padding: "40px 24px 80px" }}>
-          {/* Results header */}
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-              gap: "16px",
-              marginBottom: "32px",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              flexWrap: "wrap", gap: "16px", marginBottom: "28px",
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  color: "#aaa",
-                  marginBottom: "6px",
-                }}
-              >
+              <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#aaa", marginBottom: "6px" }}>
                 Analysis complete
               </div>
-              <h1
-                style={{
-                  fontSize: "clamp(1.6rem, 3.5vw, 2.2rem)",
-                  fontWeight: 750,
-                  color: "#0a0a0a",
-                  letterSpacing: "-0.035em",
-                  lineHeight: 1.15,
-                }}
-              >
+              <h1 style={{ fontSize: "clamp(1.5rem, 3vw, 2rem)", fontWeight: 750, color: "#0a0a0a", letterSpacing: "-0.035em", lineHeight: 1.15 }}>
                 {jobTitle}
               </h1>
-              <p style={{ fontSize: "14px", color: "#888", marginTop: "4px" }}>
+              <p style={{ fontSize: "13.5px", color: "#aaa", marginTop: "4px" }}>
                 Resume report · {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
               </p>
             </div>
             <button
               onClick={handleReset}
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "7px",
-                background: "#fff",
-                border: "1px solid #e0e0e0",
-                color: "#0a0a0a",
-                fontSize: "13.5px",
-                fontWeight: 550,
-                padding: "9px 18px",
-                borderRadius: "9px",
-                cursor: "pointer",
-                transition: "border-color 0.15s",
+                display: "inline-flex", alignItems: "center", gap: "7px",
+                background: "#fff", border: "1px solid #e0e0e0",
+                color: "#0a0a0a", fontSize: "13px", fontWeight: 550,
+                padding: "9px 18px", borderRadius: "9px",
+                cursor: "pointer", fontFamily: "inherit", transition: "border-color 0.15s",
               }}
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.borderColor = "#aaa")}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.borderColor = "#e0e0e0")}
             >
-              <RotateCcw size={14} />
-              Analyze another resume
+              <RotateCcw size={13} /> Analyze another resume
             </button>
           </div>
 
-          {/* Divider */}
-          <div style={{ height: "1px", background: "#ebebeb", marginBottom: "32px" }} />
+          <div style={{ height: "1px", background: "#e8e8e8", marginBottom: "28px" }} />
 
-          {/* Existing analysis results component — untouched */}
           <AnalysisResults
             result={analysisResult}
             savedAnalysisId={savedAnalysisId}
@@ -371,28 +412,20 @@ export default function ResumeAnalyzerPage() {
             jobRole={jobTitle}
           />
 
-          {/* Bottom reset */}
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "48px" }}>
             <button
               onClick={handleReset}
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "7px",
-                background: "#0a0a0a",
-                color: "#fff",
-                fontSize: "13.5px",
-                fontWeight: 550,
-                padding: "11px 24px",
-                borderRadius: "9px",
-                cursor: "pointer",
-                transition: "opacity 0.15s",
+                display: "inline-flex", alignItems: "center", gap: "7px",
+                background: "#0a0a0a", color: "#fff",
+                border: "none", borderRadius: "9px",
+                padding: "11px 24px", fontSize: "13.5px", fontWeight: 550,
+                cursor: "pointer", fontFamily: "inherit", transition: "opacity 0.15s",
               }}
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = "0.8")}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = "1")}
             >
-              <Plus size={14} />
-              Analyze another resume
+              <Plus size={14} /> Analyze another resume
             </button>
           </div>
         </div>
@@ -402,48 +435,26 @@ export default function ResumeAnalyzerPage() {
       {!analysisResult && (
         <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "40px 24px 80px" }}>
 
-          {/* Page header */}
+          {/* Header */}
           <div style={{ marginBottom: "32px" }}>
-            <div
-              style={{
-                fontSize: "11px",
-                fontWeight: 600,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                color: "#aaa",
-                marginBottom: "8px",
-              }}
-            >
+            <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#aaa", marginBottom: "8px" }}>
               Career tools
             </div>
-            <h1
-              style={{
-                fontSize: "clamp(1.6rem, 3.5vw, 2.2rem)",
-                fontWeight: 750,
-                color: "#0a0a0a",
-                letterSpacing: "-0.035em",
-                lineHeight: 1.15,
-                marginBottom: "8px",
-              }}
-            >
+            <h1 style={{ fontSize: "clamp(1.5rem, 3vw, 2rem)", fontWeight: 750, color: "#0a0a0a", letterSpacing: "-0.035em", lineHeight: 1.15, marginBottom: "8px" }}>
               Resume analyzer
             </h1>
-            <p style={{ fontSize: "14.5px", color: "#888", lineHeight: 1.6 }}>
+            <p style={{ fontSize: "14px", color: "#888", lineHeight: 1.6 }}>
               Upload your CV and paste a job description to get your ATS score, skill gaps, and tailored improvements.
             </p>
           </div>
 
-          {/* ── Step indicator ── */}
+          {/* Step indicator */}
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0",
+              display: "flex", alignItems: "center",
               marginBottom: "32px",
-              background: "#fff",
-              border: "1px solid #e8e8e8",
-              borderRadius: "12px",
-              padding: "4px",
+              background: "#fff", border: "1px solid #e8e8e8",
+              borderRadius: "12px", padding: "4px",
               width: "fit-content",
             }}
           >
@@ -457,23 +468,16 @@ export default function ResumeAnalyzerPage() {
                 <div key={s.n} style={{ display: "flex", alignItems: "center" }}>
                   <div
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "7px",
-                      padding: "7px 14px",
-                      borderRadius: "8px",
+                      display: "flex", alignItems: "center", gap: "7px",
+                      padding: "7px 14px", borderRadius: "8px",
                       background: isActive ? "#0a0a0a" : "transparent",
                       transition: "background 0.2s",
                     }}
                   >
                     <div
                       style={{
-                        width: "20px",
-                        height: "20px",
-                        borderRadius: "50%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
+                        width: "20px", height: "20px", borderRadius: "50%",
+                        display: "flex", alignItems: "center", justifyContent: "center",
                         background: s.done ? "#0a0a0a" : isActive ? "#fff" : "#f0f0f0",
                         flexShrink: 0,
                       }}
@@ -481,95 +485,48 @@ export default function ResumeAnalyzerPage() {
                       {s.done ? (
                         <CheckCircle2 size={12} style={{ color: "#fff" }} />
                       ) : (
-                        <span
-                          style={{
-                            fontSize: "10px",
-                            fontWeight: 700,
-                            color: isActive ? "#0a0a0a" : "#aaa",
-                          }}
-                        >
+                        <span style={{ fontSize: "10px", fontWeight: 700, color: isActive ? "#0a0a0a" : "#aaa" }}>
                           {s.n}
                         </span>
                       )}
                     </div>
-                    <span
-                      style={{
-                        fontSize: "12.5px",
-                        fontWeight: 550,
-                        color: isActive ? "#fff" : s.done ? "#555" : "#aaa",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
+                    <span style={{ fontSize: "12.5px", fontWeight: 550, color: isActive ? "#fff" : s.done ? "#555" : "#aaa", whiteSpace: "nowrap" }}>
                       {s.label}
                     </span>
                   </div>
-                  {i < 2 && (
-                    <ChevronRight size={14} style={{ color: "#ddd", flexShrink: 0, margin: "0 2px" }} />
-                  )}
+                  {i < 2 && <ChevronRight size={14} style={{ color: "#ddd", flexShrink: 0, margin: "0 2px" }} />}
                 </div>
               );
             })}
           </div>
 
-          {/* ── Two-column layout ── */}
+          {/* Two-column layout */}
           <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "20px",
-              alignItems: "start",
-            }}
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", alignItems: "start" }}
             className="resume-grid"
           >
 
-            {/* ── LEFT: Upload + preview ── */}
+            {/* LEFT: Upload + preview */}
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
 
               {/* Upload card */}
-              <div
-                style={{
-                  background: "#fff",
-                  border: "1px solid #e8e8e8",
-                  borderRadius: "14px",
-                  padding: "24px",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: "16px",
-                  }}
-                >
+              <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", padding: "24px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
                   <div>
-                    <p style={{ fontSize: "13.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>
-                      Upload CV
-                    </p>
+                    <p style={{ fontSize: "13.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>Upload CV</p>
                     <p style={{ fontSize: "12px", color: "#aaa", marginTop: "2px" }}>PDF format only</p>
                   </div>
-                  <div
-                    style={{
-                      width: "32px", height: "32px",
-                      background: "#f5f5f5",
-                      border: "1px solid #eee",
-                      borderRadius: "8px",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}
-                  >
+                  <div style={{ width: "32px", height: "32px", background: "#f5f5f5", border: "1px solid #eee", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <FileText size={15} style={{ color: "#888" }} />
                   </div>
                 </div>
 
-                {/* Dropzone */}
                 {!uploadedFileName ? (
                   <div
                     {...getRootProps()}
                     style={{
                       border: `2px dashed ${isDragActive ? "#0a0a0a" : "#ddd"}`,
-                      borderRadius: "10px",
-                      padding: "36px 20px",
-                      textAlign: "center",
+                      borderRadius: "10px", padding: "36px 20px", textAlign: "center",
                       cursor: isExtracting || isLoading ? "not-allowed" : "pointer",
                       background: isDragActive ? "#f5f5f5" : "#fafafa",
                       transition: "all 0.2s",
@@ -578,107 +535,46 @@ export default function ResumeAnalyzerPage() {
                     <input {...getInputProps()} />
                     {isExtracting ? (
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-                        <div
-                          style={{
-                            width: "28px", height: "28px",
-                            border: "2px solid #e0e0e0",
-                            borderTop: "2px solid #0a0a0a",
-                            borderRadius: "50%",
-                            animation: "spin 0.8s linear infinite",
-                          }}
-                        />
+                        <div style={{ width: "28px", height: "28px", border: "2px solid #e0e0e0", borderTop: "2px solid #0a0a0a", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
                         <p style={{ fontSize: "13px", color: "#888" }}>Extracting resume content...</p>
                       </div>
                     ) : (
                       <>
-                        <div
-                          style={{
-                            width: "40px", height: "40px",
-                            background: "#f0f0f0",
-                            border: "1px solid #e4e4e4",
-                            borderRadius: "10px",
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            margin: "0 auto 14px",
-                          }}
-                        >
+                        <div style={{ width: "40px", height: "40px", background: "#f0f0f0", border: "1px solid #e4e4e4", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
                           <Upload size={17} style={{ color: "#666" }} />
                         </div>
                         <p style={{ fontSize: "13.5px", fontWeight: 550, color: "#0a0a0a", marginBottom: "4px" }}>
                           {isDragActive ? "Drop your PDF here" : "Drag & drop your CV"}
                         </p>
-                        <p style={{ fontSize: "12px", color: "#bbb" }}>
-                          or click to browse · PDF only · Max 10 MB
-                        </p>
+                        <p style={{ fontSize: "12px", color: "#bbb" }}>or click to browse · PDF only · Max 10 MB</p>
                       </>
                     )}
                   </div>
                 ) : (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: "10px",
-                      padding: "12px 14px",
-                      background: "#f9f9f9",
-                      border: "1px solid #e8e8e8",
-                      borderRadius: "10px",
-                    }}
-                  >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", padding: "12px 14px", background: "#f9f9f9", border: "1px solid #e8e8e8", borderRadius: "10px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
-                      <div
-                        style={{
-                          width: "32px", height: "32px", flexShrink: 0,
-                          background: "#f0f0f0",
-                          border: "1px solid #e4e4e4",
-                          borderRadius: "8px",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                        }}
-                      >
+                      <div style={{ width: "32px", height: "32px", flexShrink: 0, background: "#f0f0f0", border: "1px solid #e4e4e4", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <FileText size={14} style={{ color: "#555" }} />
                       </div>
                       <div style={{ minWidth: 0 }}>
-                        <p
-                          style={{
-                            fontSize: "13px",
-                            fontWeight: 550,
-                            color: "#0a0a0a",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
+                        <p style={{ fontSize: "13px", fontWeight: 550, color: "#0a0a0a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {uploadedFileName}
                         </p>
                         <p style={{ fontSize: "11.5px", color: "#aaa", marginTop: "1px" }}>
-                          {extractedText
-                            ? `${extractedText.split(" ").length.toLocaleString()} words extracted`
-                            : "Processing..."}
+                          {extractedText ? `${extractedText.split(" ").length.toLocaleString()} words extracted` : "Processing..."}
                         </p>
                       </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
                       {extractedText && (
-                        <span
-                          style={{
-                            fontSize: "11px", fontWeight: 600,
-                            background: "#f0faf4", color: "#2d7a4f",
-                            border: "1px solid #c8ecd8",
-                            padding: "2px 8px", borderRadius: "20px",
-                          }}
-                        >
+                        <span style={{ fontSize: "11px", fontWeight: 600, background: "#f0faf4", color: "#2d7a4f", border: "1px solid #c8ecd8", padding: "2px 8px", borderRadius: "20px" }}>
                           Ready
                         </span>
                       )}
                       <button
                         onClick={handleClearCv}
                         disabled={isExtracting || isLoading}
-                        style={{
-                          background: "none", border: "none", cursor: "pointer",
-                          padding: "4px", borderRadius: "6px", color: "#bbb",
-                          display: "flex", alignItems: "center",
-                          transition: "color 0.15s",
-                        }}
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", borderRadius: "6px", color: "#bbb", display: "flex", alignItems: "center" }}
                         onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = "#555")}
                         onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = "#bbb")}
                       >
@@ -688,49 +584,23 @@ export default function ResumeAnalyzerPage() {
                   </div>
                 )}
 
-                {isDragReject && (
-                  <p style={{ fontSize: "12px", color: "#dc2626", marginTop: "8px" }}>
-                    Only PDF files are accepted.
-                  </p>
-                )}
-                {extractError && (
-                  <p style={{ fontSize: "12px", color: "#dc2626", marginTop: "8px" }} role="alert">
-                    {extractError}
-                  </p>
-                )}
+                {isDragReject && <p style={{ fontSize: "12px", color: "#dc2626", marginTop: "8px" }}>Only PDF files are accepted.</p>}
+                {extractError && <p style={{ fontSize: "12px", color: "#dc2626", marginTop: "8px" }} role="alert">{extractError}</p>}
               </div>
 
               {/* Extracted text preview */}
               {extractedText && (
-                <div
-                  style={{
-                    background: "#fff",
-                    border: "1px solid #e8e8e8",
-                    borderRadius: "14px",
-                    padding: "20px 24px",
-                  }}
-                >
+                <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", padding: "20px 24px" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-                    <p style={{ fontSize: "13px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>
-                      Extracted content
-                    </p>
-                    <span style={{ fontSize: "11px", color: "#aaa" }}>
-                      {extractedText.split(" ").length.toLocaleString()} words
-                    </span>
+                    <p style={{ fontSize: "13px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>Extracted content</p>
+                    <span style={{ fontSize: "11px", color: "#aaa" }}>{extractedText.split(" ").length.toLocaleString()} words</span>
                   </div>
                   <pre
                     style={{
-                      maxHeight: "260px",
-                      overflowY: "auto",
-                      whiteSpace: "pre-wrap",
-                      fontSize: "11.5px",
-                      lineHeight: 1.7,
-                      color: "#666",
-                      background: "#fafafa",
-                      border: "1px solid #f0f0f0",
-                      borderRadius: "8px",
-                      padding: "14px",
-                      margin: 0,
+                      maxHeight: "260px", overflowY: "auto", whiteSpace: "pre-wrap",
+                      fontSize: "11.5px", lineHeight: 1.7, color: "#666",
+                      background: "#fafafa", border: "1px solid #f0f0f0",
+                      borderRadius: "8px", padding: "14px", margin: 0,
                       fontFamily: "var(--font-geist-mono), monospace",
                     }}
                   >
@@ -740,40 +610,22 @@ export default function ResumeAnalyzerPage() {
               )}
             </div>
 
-            {/* ── RIGHT: Job details + Analyze ── */}
+            {/* RIGHT: Job details + Analyze */}
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
 
-              {/* Job role dropdown */}
-              <div
-                style={{
-                  background: "#fff",
-                  border: "1px solid #e8e8e8",
-                  borderRadius: "14px",
-                  padding: "20px 24px",
-                }}
-              >
-                <p style={{ fontSize: "13.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em", marginBottom: "4px" }}>
-                  Target job role
-                </p>
-                <p style={{ fontSize: "12px", color: "#aaa", marginBottom: "14px" }}>
-                  Select the role you're applying for
-                </p>
+              {/* Job role */}
+              <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", padding: "20px 24px" }}>
+                <p style={{ fontSize: "13.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em", marginBottom: "4px" }}>Target job role</p>
+                <p style={{ fontSize: "12px", color: "#aaa", marginBottom: "14px" }}>Select the role you're applying for</p>
                 <select
                   value={jobTitle}
                   onChange={(e) => setJobTitle(e.target.value as JobTitle)}
                   disabled={isLoading}
                   style={{
-                    width: "100%",
-                    background: "#fafafa",
-                    border: "1px solid #e4e4e4",
-                    borderRadius: "9px",
-                    padding: "10px 14px",
-                    fontSize: "13.5px",
-                    color: "#0a0a0a",
-                    outline: "none",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    appearance: "auto",
+                    width: "100%", background: "#fafafa", border: "1px solid #e4e4e4",
+                    borderRadius: "9px", padding: "10px 14px", fontSize: "13.5px",
+                    color: "#0a0a0a", outline: "none", cursor: "pointer",
+                    fontFamily: "inherit", appearance: "auto",
                   }}
                   onFocus={(e) => ((e.target as HTMLElement).style.borderColor = "#0a0a0a")}
                   onBlur={(e)  => ((e.target as HTMLElement).style.borderColor = "#e4e4e4")}
@@ -783,21 +635,9 @@ export default function ResumeAnalyzerPage() {
               </div>
 
               {/* Job description */}
-              <div
-                style={{
-                  background: "#fff",
-                  border: "1px solid #e8e8e8",
-                  borderRadius: "14px",
-                  padding: "20px 24px",
-                  flex: 1,
-                }}
-              >
-                <p style={{ fontSize: "13.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em", marginBottom: "4px" }}>
-                  Job requirements
-                </p>
-                <p style={{ fontSize: "12px", color: "#aaa", marginBottom: "14px" }}>
-                  Paste the full job description for the most accurate match
-                </p>
+              <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", padding: "20px 24px", flex: 1 }}>
+                <p style={{ fontSize: "13.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em", marginBottom: "4px" }}>Job requirements</p>
+                <p style={{ fontSize: "12px", color: "#aaa", marginBottom: "14px" }}>Paste the full job description for the most accurate match</p>
                 <textarea
                   placeholder="e.g. We are looking for a Senior Software Engineer with 5+ years of experience in React, Node.js, and AWS..."
                   rows={10}
@@ -805,24 +645,14 @@ export default function ResumeAnalyzerPage() {
                   onChange={(e) => setJobDescription(e.target.value)}
                   disabled={isLoading}
                   style={{
-                    width: "100%",
-                    background: "#fafafa",
-                    border: "1px solid #e4e4e4",
-                    borderRadius: "9px",
-                    padding: "12px 14px",
-                    fontSize: "13px",
-                    color: "#0a0a0a",
-                    lineHeight: 1.7,
-                    outline: "none",
-                    resize: "vertical",
-                    fontFamily: "inherit",
-                    transition: "border-color 0.15s",
+                    width: "100%", background: "#fafafa", border: "1px solid #e4e4e4",
+                    borderRadius: "9px", padding: "12px 14px", fontSize: "13px",
+                    color: "#0a0a0a", lineHeight: 1.7, outline: "none", resize: "vertical",
+                    fontFamily: "inherit", transition: "border-color 0.15s",
                   }}
                   onFocus={(e) => ((e.target as HTMLElement).style.borderColor = "#0a0a0a")}
                   onBlur={(e)  => ((e.target as HTMLElement).style.borderColor = "#e4e4e4")}
                 />
-
-                {/* Character count */}
                 {jobDescription && (
                   <p style={{ fontSize: "11px", color: "#bbb", marginTop: "6px", textAlign: "right" }}>
                     {jobDescription.trim().split(/\s+/).length} words
@@ -830,15 +660,8 @@ export default function ResumeAnalyzerPage() {
                 )}
               </div>
 
-              {/* Analyze button + error */}
-              <div
-                style={{
-                  background: "#fff",
-                  border: "1px solid #e8e8e8",
-                  borderRadius: "14px",
-                  padding: "20px 24px",
-                }}
-              >
+              {/* Analyze button + checklist + error */}
+              <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", padding: "20px 24px" }}>
                 {/* Checklist */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
                   {[
@@ -847,16 +670,11 @@ export default function ResumeAnalyzerPage() {
                   ].map((c) => (
                     <div key={c.label} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       {c.done ? (
-                        <CheckCircle2 size={14} style={{ color: "#2d7a4f", flexShrink: 0 }} />
+                        <CheckCircle2 size={14} style={{ color: "#22c55e", flexShrink: 0 }} />
                       ) : (
-                        <div style={{
-                          width: "14px", height: "14px", borderRadius: "50%",
-                          border: "1.5px solid #ddd", flexShrink: 0,
-                        }} />
+                        <div style={{ width: "14px", height: "14px", borderRadius: "50%", border: "1.5px solid #ddd", flexShrink: 0 }} />
                       )}
-                      <span style={{ fontSize: "12.5px", color: c.done ? "#555" : "#bbb", fontWeight: c.done ? 450 : 400 }}>
-                        {c.label}
-                      </span>
+                      <span style={{ fontSize: "12.5px", color: c.done ? "#555" : "#bbb" }}>{c.label}</span>
                     </div>
                   ))}
                 </div>
@@ -868,14 +686,10 @@ export default function ResumeAnalyzerPage() {
                     width: "100%",
                     background: canAnalyze ? "#0a0a0a" : "#f0f0f0",
                     color: canAnalyze ? "#fff" : "#bbb",
-                    border: "none",
-                    borderRadius: "9px",
-                    padding: "12px",
-                    fontSize: "14px",
-                    fontWeight: 600,
+                    border: "none", borderRadius: "9px", padding: "12px",
+                    fontSize: "14px", fontWeight: 600,
                     cursor: canAnalyze ? "pointer" : "not-allowed",
-                    letterSpacing: "-0.01em",
-                    transition: "opacity 0.15s",
+                    letterSpacing: "-0.01em", transition: "opacity 0.15s",
                     fontFamily: "inherit",
                   }}
                   onMouseEnter={(e) => { if (canAnalyze) (e.currentTarget as HTMLElement).style.opacity = "0.85"; }}
@@ -888,24 +702,43 @@ export default function ResumeAnalyzerPage() {
                   Analysis takes 15–30 seconds
                 </p>
 
-                {/* Error */}
+                {/* Error state */}
                 {analysisError && (
                   <div
                     role="alert"
                     style={{
-                      marginTop: "14px",
-                      padding: "12px 14px",
-                      borderRadius: "9px",
+                      marginTop: "14px", padding: "14px 16px", borderRadius: "10px",
                       background: analysisRetryable ? "#fffbeb" : "#fef2f2",
                       border: `1px solid ${analysisRetryable ? "#fde68a" : "#fecaca"}`,
                     }}
                   >
-                    <p style={{ fontSize: "13px", fontWeight: 600, color: analysisRetryable ? "#92400e" : "#991b1b", marginBottom: "2px" }}>
-                      {analysisRetryable ? "Service temporarily unavailable" : "Analysis failed"}
-                    </p>
-                    <p style={{ fontSize: "12.5px", color: analysisRetryable ? "#b45309" : "#b91c1c" }}>
-                      {analysisError}
-                    </p>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                      <AlertCircle size={15} style={{ color: analysisRetryable ? "#92400e" : "#991b1b", flexShrink: 0, marginTop: "1px" }} />
+                      <div>
+                        <p style={{ fontSize: "13px", fontWeight: 600, color: analysisRetryable ? "#92400e" : "#991b1b", marginBottom: "3px" }}>
+                          {analysisRetryable ? "Service temporarily unavailable" : "Analysis failed"}
+                        </p>
+                        <p style={{ fontSize: "12.5px", color: analysisRetryable ? "#b45309" : "#b91c1c", lineHeight: 1.5 }}>
+                          {analysisError}
+                        </p>
+                        {analysisRetryable && (
+                          <button
+                            onClick={handleAnalyze}
+                            disabled={!canAnalyze}
+                            style={{
+                              marginTop: "8px",
+                              fontSize: "12px", fontWeight: 600,
+                              color: "#92400e", background: "none",
+                              border: "1px solid #fde68a", borderRadius: "6px",
+                              padding: "4px 12px", cursor: "pointer",
+                              fontFamily: "inherit",
+                            }}
+                          >
+                            Retry
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

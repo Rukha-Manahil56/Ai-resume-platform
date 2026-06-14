@@ -21,7 +21,7 @@ export default function AppLayout({
           <div className="w-7 h-7 rounded-md bg-white flex items-center justify-center">
             <span className="text-black font-black text-xs">AI</span>
           </div>
-          <span className="text-white font-bold tracking-tight">ResumeIQ</span>
+          <span className="text-white font-bold tracking-tight">CareerLens</span>
         </div>
         <button
           onClick={() => setMobileOpen(!mobileOpen)}

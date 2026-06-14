@@ -1,7 +1,7 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import Link from "next/link";
-import { useState } from "react";
 import {
   FileBarChart, ChevronDown, ChevronUp,
   CheckCircle2, TrendingUp, Download, Loader2,
@@ -40,6 +40,85 @@ function getScoreConfig(score: number) {
   };
 }
 
+/* ── Career Readiness calculator (frontend only) ── */
+function calcCareerReadiness(result: CvAnalysisResult, atsScore: number) {
+  const totalSkills   = result.missingSkills.length;
+  const highMissing   = result.missingSkills.filter((s) => s.importance === "high").length;
+  const medMissing    = result.missingSkills.filter((s) => s.importance === "medium").length;
+
+  // Skills match: penalise more for high-priority gaps
+  const skillPenalty  = Math.min(100, highMissing * 15 + medMissing * 7 + (totalSkills - highMissing - medMissing) * 3);
+  const skillsMatch   = Math.max(0, 100 - skillPenalty);
+
+  // Resume quality: based on ATS score + number of improvements
+  const improvPenalty = Math.min(40, result.improvements.length * 8);
+  const resumeQuality = Math.max(0, Math.round(atsScore * 0.7 + 30 - improvPenalty));
+
+  // Interview readiness: proportional to ATS but discounted by missing skills
+  const interviewReadiness = Math.max(0, Math.round(atsScore * 0.6 + skillsMatch * 0.4) - highMissing * 5);
+
+  // Improvement urgency (inverted — higher = LESS urgent = better)
+  const urgencyRaw    = Math.max(0, 100 - highMissing * 20 - medMissing * 8);
+  const improvUrgency = Math.min(100, urgencyRaw);
+
+  const overall = Math.round(
+    (atsScore * 0.35 + skillsMatch * 0.25 + resumeQuality * 0.2 + interviewReadiness * 0.2)
+  );
+
+  return {
+    overall:            Math.min(100, overall),
+    skillsMatch:        Math.min(100, Math.round(skillsMatch)),
+    resumeQuality:      Math.min(100, Math.round(resumeQuality)),
+    interviewReadiness: Math.min(100, Math.round(interviewReadiness)),
+    improvUrgency:      Math.min(100, Math.round(improvUrgency)),
+  };
+}
+
+function getReadinessLabel(score: number) {
+  if (score >= 85) return { label: "Strong candidate",          color: "#22c55e", bg: "#f0faf4", border: "#c8ecd8" };
+  if (score >= 70) return { label: "Good — needs refinement",  color: "#92400e", bg: "#fffbeb", border: "#fde68a" };
+  return              { label: "Needs focused improvement",    color: "#991b1b", bg: "#fef2f2", border: "#fecaca" };
+}
+
+/* ── Progress bar ── */
+function MetricBar({
+  label, value, sublabel, color = "#0a0a0a",
+}: { label: string; value: number; sublabel?: string; color?: string }) {
+  return (
+    <div style={{ marginBottom: "18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "6px" }}>
+        <div>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "#0a0a0a" }}>{label}</span>
+          {sublabel && (
+            <span style={{ fontSize: "11.5px", color: "#aaa", marginLeft: "8px" }}>{sublabel}</span>
+          )}
+        </div>
+        <span style={{ fontSize: "14px", fontWeight: 700, color: "#0a0a0a", letterSpacing: "-0.02em" }}>
+          {value}%
+        </span>
+      </div>
+      <div
+        style={{
+          height: "6px",
+          background: "#f0f0f0",
+          borderRadius: "3px",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${value}%`,
+            height: "100%",
+            background: color,
+            borderRadius: "3px",
+            transition: "width 0.8s cubic-bezier(0.4,0,0.2,1)",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 /* ── Circular progress SVG ── */
 function ScoreRing({ score, color }: { score: number; color: string }) {
   const radius = 54;
@@ -48,7 +127,7 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
   const gap = circumference - filled;
   return (
     <svg width="140" height="140" viewBox="0 0 140 140" className="shrink-0">
-      <circle cx="70" cy="70" r={radius} fill="none" stroke="#1e1e1e" strokeWidth="10" />
+      <circle cx="70" cy="70" r={radius} fill="none" stroke="#f0f0f0" strokeWidth="10" />
       <circle cx="70" cy="70" r={radius} fill="none" stroke={color} strokeWidth="10"
         strokeLinecap="round"
         strokeDasharray={`${filled} ${gap}`}
@@ -56,11 +135,11 @@ function ScoreRing({ score, color }: { score: number; color: string }) {
         style={{ transition: "stroke-dasharray 1s ease" }}
       />
       <text x="70" y="62" textAnchor="middle"
-        style={{ fill: "white", fontSize: "26px", fontWeight: 900, letterSpacing: "-1px" }}>
+        style={{ fill: "#0a0a0a", fontSize: "26px", fontWeight: 900, letterSpacing: "-1px" }}>
         {score}
       </text>
       <text x="70" y="80" textAnchor="middle"
-        style={{ fill: "#666", fontSize: "11px", fontWeight: 500 }}>
+        style={{ fill: "#aaa", fontSize: "11px", fontWeight: 500 }}>
         out of 100
       </text>
     </svg>
@@ -74,31 +153,67 @@ function QuestionCard({ item, index }: {
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-xl overflow-hidden"
-         style={{ border: "1px solid #1e1e1e", background: "#0f0f0f" }}>
+    <div
+      style={{
+        border: "1px solid #e8e8e8",
+        borderRadius: "10px",
+        overflow: "hidden",
+        background: "#fff",
+      }}
+    >
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-start justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "16px",
+          padding: "14px 18px",
+          textAlign: "left",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          transition: "background 0.15s",
+          fontFamily: "inherit",
+        }}
+        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "#fafafa")}
+        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
       >
-        <div className="flex items-start gap-3 min-w-0">
-          <span className="shrink-0 mt-0.5 w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold"
-                style={{ background: "#1e1e1e", color: "#7C3AED" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", minWidth: 0 }}>
+          <span
+            style={{
+              flexShrink: 0,
+              marginTop: "2px",
+              width: "24px", height: "24px",
+              borderRadius: "6px",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "11px", fontWeight: 700,
+              background: "#f5f5f5",
+              color: "#555",
+              border: "1px solid #eee",
+            }}
+          >
             {index + 1}
           </span>
-          <p style={{ fontWeight: 600, color: "white", fontSize: "0.9rem", lineHeight: 1.5 }}>
+          <p style={{ fontWeight: 550, color: "#0a0a0a", fontSize: "13.5px", lineHeight: 1.55 }}>
             {item.question}
           </p>
         </div>
-        <span className="shrink-0 mt-0.5" style={{ color: "#555" }}>
-          {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        <span style={{ color: "#bbb", flexShrink: 0, marginTop: "2px" }}>
+          {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </span>
       </button>
       {open && (
-        <div className="px-5 pb-5" style={{ borderTop: "1px solid #1e1e1e" }}>
-          <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "#7C3AED", marginBottom: "0.5rem", marginTop: "1rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Model Answer
+        <div style={{ padding: "14px 18px 16px", borderTop: "1px solid #f0f0f0" }}>
+          <p style={{
+            fontSize: "10.5px", fontWeight: 700, color: "#aaa",
+            letterSpacing: "0.06em", textTransform: "uppercase",
+            marginBottom: "8px",
+          }}>
+            Model answer
           </p>
-          <p style={{ fontSize: "0.88rem", color: "#aaa", lineHeight: 1.75 }}>
+          <p style={{ fontSize: "13px", color: "#555", lineHeight: 1.75 }}>
             {item.modelAnswer}
           </p>
         </div>
@@ -107,7 +222,7 @@ function QuestionCard({ item, index }: {
   );
 }
 
-/* ── PDF generator ── */
+/* ── PDF generator — unchanged ── */
 async function generatePdfReport(
   result: CvAnalysisResult,
   jobRole: string,
@@ -124,291 +239,112 @@ async function generatePdfReport(
 
   let y = 0;
 
-  /* ── helpers ── */
   function checkPage(needed = 10) {
-    if (y + needed > 270) {
-      doc.addPage();
-      y = MARGIN;
-    }
+    if (y + needed > 270) { doc.addPage(); y = MARGIN; }
   }
-
   function sectionTitle(text: string) {
-    checkPage(14);
-    y += 6;
+    checkPage(14); y += 6;
     doc.setFillColor(240, 240, 240);
     doc.rect(MARGIN, y, CONTENT, 8, "F");
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(40, 40, 40);
-    doc.text(text.toUpperCase(), MARGIN + 3, y + 5.5);
-    y += 12;
+    doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(40, 40, 40);
+    doc.text(text.toUpperCase(), MARGIN + 3, y + 5.5); y += 12;
   }
-
   function bodyText(text: string, indent = 0, color: [number, number, number] = [80, 80, 80]) {
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(...color);
+    doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.setTextColor(...color);
     const lines = doc.splitTextToSize(text, CONTENT - indent);
-    lines.forEach((line: string) => {
-      checkPage(6);
-      doc.text(line, MARGIN + indent, y);
-      y += 5.5;
-    });
+    lines.forEach((line: string) => { checkPage(6); doc.text(line, MARGIN + indent, y); y += 5.5; });
   }
-
   function labelText(text: string) {
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(120, 120, 120);
-    doc.text(text, MARGIN, y);
-    y += 4.5;
+    doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(120, 120, 120);
+    doc.text(text, MARGIN, y); y += 4.5;
   }
-
   function divider() {
-    checkPage(6);
-    y += 3;
-    doc.setDrawColor(220, 220, 220);
-    doc.setLineWidth(0.3);
-    doc.line(MARGIN, y, MARGIN + CONTENT, y);
-    y += 4;
+    checkPage(6); y += 3;
+    doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.3);
+    doc.line(MARGIN, y, MARGIN + CONTENT, y); y += 4;
   }
 
-  /* ══ HEADER ══ */
   y = MARGIN;
-
-  /* App name */
-  doc.setFontSize(22);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(10, 10, 10);
-  doc.text("ResumeIQ", MARGIN, y);
-
-  /* Date top-right */
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(150, 150, 150);
+  doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.setTextColor(10, 10, 10);
+  doc.text("CareerLens", MARGIN, y);
+  doc.setFontSize(8); doc.setFont("helvetica", "normal"); doc.setTextColor(150, 150, 150);
   doc.text(date, PAGE_W - MARGIN, y, { align: "right" });
   y += 5;
+  doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(100, 100, 100);
+  doc.text("AI-Powered Resume Analysis Report", MARGIN, y); y += 8;
+  doc.setDrawColor(10, 10, 10); doc.setLineWidth(0.6);
+  doc.line(MARGIN, y, MARGIN + CONTENT, y); y += 8;
 
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(100, 100, 100);
-  doc.text("AI-Powered Resume Analysis Report", MARGIN, y);
-  y += 8;
-
-  /* Thin rule under header */
-  doc.setDrawColor(10, 10, 10);
-  doc.setLineWidth(0.6);
-  doc.line(MARGIN, y, MARGIN + CONTENT, y);
-  y += 8;
-
-  /* ══ META ROW ══ */
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(40, 40, 40);
-  doc.text("Target Role", MARGIN, y);
-  doc.text("ATS Score", MARGIN + 90, y);
-  doc.text("Verdict", MARGIN + 130, y);
+  doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(40, 40, 40);
+  doc.text("Target Role", MARGIN, y); doc.text("ATS Score", MARGIN + 90, y); doc.text("Verdict", MARGIN + 130, y);
   y += 5;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.setTextColor(10, 10, 10);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(10, 10, 10);
   doc.text(jobRole || "Not specified", MARGIN, y);
-
-  doc.setFontSize(18);
-  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18); doc.setFont("helvetica", "bold");
   doc.text(`${score}%`, MARGIN + 90, y);
-
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(80, 80, 80);
-  doc.text(config.label, MARGIN + 130, y);
-  y += 10;
-
+  doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(80, 80, 80);
+  doc.text(config.label, MARGIN + 130, y); y += 10;
   divider();
 
-  /* ══ SECTION 1: EXPLANATION ══ */
-  sectionTitle("1. Summary");
-  bodyText(result.explanation);
-  y += 2;
-
-  /* ══ SECTION 2: MISSING SKILLS ══ */
+  sectionTitle("1. Summary"); bodyText(result.explanation); y += 2;
   sectionTitle("2. Missing Skills");
-
   const highSkills   = result.missingSkills.filter((s) => s.importance === "high");
   const mediumSkills = result.missingSkills.filter((s) => s.importance === "medium");
   const lowSkills    = result.missingSkills.filter((s) => s.importance === "low");
-
-  if (result.missingSkills.length === 0) {
-    bodyText("No major skill gaps identified.");
-  } else {
-    if (highSkills.length > 0) {
-      labelText("HIGH PRIORITY");
-      bodyText(highSkills.map((s) => `• ${s.name}`).join("   "), 0, [180, 40, 40]);
-      y += 2;
-    }
-    if (mediumSkills.length > 0) {
-      labelText("MEDIUM PRIORITY");
-      bodyText(mediumSkills.map((s) => `• ${s.name}`).join("   "), 0, [140, 100, 20]);
-      y += 2;
-    }
-    if (lowSkills.length > 0) {
-      labelText("LOW PRIORITY");
-      bodyText(lowSkills.map((s) => `• ${s.name}`).join("   "), 0, [100, 100, 100]);
-      y += 2;
-    }
+  if (result.missingSkills.length === 0) { bodyText("No major skill gaps identified."); }
+  else {
+    if (highSkills.length)   { labelText("HIGH PRIORITY");   bodyText(highSkills.map((s) => `• ${s.name}`).join("   "), 0, [180, 40, 40]);   y += 2; }
+    if (mediumSkills.length) { labelText("MEDIUM PRIORITY"); bodyText(mediumSkills.map((s) => `• ${s.name}`).join("   "), 0, [140, 100, 20]); y += 2; }
+    if (lowSkills.length)    { labelText("LOW PRIORITY");    bodyText(lowSkills.map((s) => `• ${s.name}`).join("   "), 0, [100, 100, 100]);   y += 2; }
   }
-
-  /* ══ SECTION 3: IMPROVEMENTS ══ */
   sectionTitle("3. Top 5 CV Improvements");
-
   result.improvements.forEach((item, i) => {
     checkPage(30);
-
-    /* Suggestion */
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(20, 20, 20);
-    const suggLines = doc.splitTextToSize(`${i + 1}. ${item.suggestion}`, CONTENT);
-    suggLines.forEach((line: string) => {
-      doc.text(line, MARGIN, y);
-      y += 5;
-    });
-
-    /* Before */
+    doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(20, 20, 20);
+    doc.splitTextToSize(`${i + 1}. ${item.suggestion}`, CONTENT).forEach((l: string) => { doc.text(l, MARGIN, y); y += 5; });
     checkPage(10);
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(160, 40, 40);
-    doc.text("BEFORE", MARGIN + 3, y);
-    y += 4;
-    doc.setFont("helvetica", "italic");
-    doc.setTextColor(120, 60, 60);
-    const beforeLines = doc.splitTextToSize(`"${item.before}"`, CONTENT - 6);
-    beforeLines.forEach((line: string) => {
-      checkPage(5);
-      doc.text(line, MARGIN + 3, y);
-      y += 4.5;
-    });
-
-    /* After */
-    checkPage(10);
+    doc.setFontSize(7.5); doc.setFont("helvetica", "bold"); doc.setTextColor(160, 40, 40); doc.text("BEFORE", MARGIN + 3, y); y += 4;
+    doc.setFont("helvetica", "italic"); doc.setTextColor(120, 60, 60);
+    doc.splitTextToSize(`"${item.before}"`, CONTENT - 6).forEach((l: string) => { checkPage(5); doc.text(l, MARGIN + 3, y); y += 4.5; });
     y += 1;
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(30, 120, 60);
-    doc.text("AFTER", MARGIN + 3, y);
+    doc.setFont("helvetica", "bold"); doc.setTextColor(30, 120, 60); doc.text("AFTER", MARGIN + 3, y); y += 4;
+    doc.setFont("helvetica", "normal"); doc.setTextColor(30, 90, 50);
+    doc.splitTextToSize(`"${item.after}"`, CONTENT - 6).forEach((l: string) => { checkPage(5); doc.text(l, MARGIN + 3, y); y += 4.5; });
     y += 4;
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(30, 90, 50);
-    const afterLines = doc.splitTextToSize(`"${item.after}"`, CONTENT - 6);
-    afterLines.forEach((line: string) => {
-      checkPage(5);
-      doc.text(line, MARGIN + 3, y);
-      y += 4.5;
-    });
-
-    y += 4;
-    /* Light separator between improvements */
-    if (i < result.improvements.length - 1) {
-      doc.setDrawColor(230, 230, 230);
-      doc.setLineWidth(0.2);
-      doc.line(MARGIN, y, MARGIN + CONTENT, y);
-      y += 4;
-    }
+    if (i < result.improvements.length - 1) { doc.setDrawColor(230, 230, 230); doc.setLineWidth(0.2); doc.line(MARGIN, y, MARGIN + CONTENT, y); y += 4; }
   });
-
-  /* ══ SECTION 4: INTERVIEW QUESTIONS ══ */
   sectionTitle("4. Interview Questions & Model Answers");
-
   result.interviewQuestions.forEach((item, i) => {
     checkPage(20);
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(20, 20, 20);
-    const qLines = doc.splitTextToSize(`Q${i + 1}. ${item.question}`, CONTENT);
-    qLines.forEach((line: string) => {
-      checkPage(5);
-      doc.text(line, MARGIN, y);
-      y += 5;
-    });
-
+    doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(20, 20, 20);
+    doc.splitTextToSize(`Q${i + 1}. ${item.question}`, CONTENT).forEach((l: string) => { checkPage(5); doc.text(l, MARGIN, y); y += 5; });
     checkPage(8);
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(100, 60, 180);
-    doc.text("Model Answer:", MARGIN + 3, y);
-    y += 4.5;
-
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(80, 80, 80);
-    const aLines = doc.splitTextToSize(item.modelAnswer, CONTENT - 6);
-    aLines.forEach((line: string) => {
-      checkPage(5);
-      doc.text(line, MARGIN + 3, y);
-      y += 4.5;
-    });
-
+    doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(100, 60, 180); doc.text("Model Answer:", MARGIN + 3, y); y += 4.5;
+    doc.setFont("helvetica", "normal"); doc.setTextColor(80, 80, 80);
+    doc.splitTextToSize(item.modelAnswer, CONTENT - 6).forEach((l: string) => { checkPage(5); doc.text(l, MARGIN + 3, y); y += 4.5; });
     y += 4;
   });
-
-  /* ══ SECTION 5: FINAL RECOMMENDATION ══ */
   sectionTitle("5. Final Recommendation");
-
-  /* Box */
   checkPage(40);
-  doc.setFillColor(248, 248, 248);
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.3);
+  doc.setFillColor(248, 248, 248); doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3);
   doc.roundedRect(MARGIN, y, CONTENT, 36, 2, 2, "FD");
-
   const innerY = y + 6;
-  doc.setFontSize(9);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(40, 40, 40);
+  doc.setFontSize(9); doc.setFont("helvetica", "bold"); doc.setTextColor(40, 40, 40);
   doc.text("Overall Readiness", MARGIN + 4, innerY);
   doc.text(`${config.recommendation} Match — ${score}%`, MARGIN + 50, innerY);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
-  doc.setTextColor(80, 80, 80);
-
-  const primaryGap = result.missingSkills.find((s) => s.importance === "high")?.name
-    ?? result.missingSkills[0]?.name
-    ?? "None identified";
-
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(80, 80, 80);
+  const primaryGap = result.missingSkills.find((s) => s.importance === "high")?.name ?? result.missingSkills[0]?.name ?? "None identified";
   doc.text(`Primary gap:  ${primaryGap}`, MARGIN + 4, innerY + 8);
-
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(40, 40, 40);
-  doc.text("Next action:", MARGIN + 4, innerY + 16);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(80, 80, 80);
-  const actionLines = doc.splitTextToSize(config.action, CONTENT - 10);
-  actionLines.forEach((line: string, idx: number) => {
-    doc.text(line, MARGIN + 4, innerY + 22 + idx * 5);
-  });
-
+  doc.setFont("helvetica", "bold"); doc.setTextColor(40, 40, 40); doc.text("Next action:", MARGIN + 4, innerY + 16);
+  doc.setFont("helvetica", "normal"); doc.setTextColor(80, 80, 80);
+  doc.splitTextToSize(config.action, CONTENT - 10).forEach((l: string, idx: number) => { doc.text(l, MARGIN + 4, innerY + 22 + idx * 5); });
   y += 42;
-
-  /* ══ FOOTER ══ */
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
-    doc.setPage(p);
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(180, 180, 180);
-    doc.text(
-      `ResumeIQ  ·  Generated ${date}  ·  Page ${p} of ${totalPages}`,
-      PAGE_W / 2,
-      290,
-      { align: "center" }
-    );
+    doc.setPage(p); doc.setFontSize(7.5); doc.setFont("helvetica", "normal"); doc.setTextColor(180, 180, 180);
+    doc.text(`CareerLens  ·  Generated ${date}  ·  Page ${p} of ${totalPages}`, PAGE_W / 2, 290, { align: "center" });
   }
-
-  /* ══ SAVE ══ */
-  const fileName = `ResumeIQ_Report_${(jobRole || "Analysis").replace(/\s+/g, "_")}_${Date.now()}.pdf`;
-  doc.save(fileName);
+  doc.save(`CareerLens_Report_${(jobRole || "Analysis").replace(/\s+/g, "_")}_${Date.now()}.pdf`);
 }
 
 /* ══════════════════════════════════════════
@@ -416,58 +352,74 @@ async function generatePdfReport(
 ══════════════════════════════════════════ */
 export function AnalysisResults({ result, savedAnalysisId, saveWarning, jobRole }: Props) {
   const [activeTab, setActiveTab] = useState<
-    "overview" | "skills" | "improvements" | "interview" | "recommendation"
+    "overview" | "skills" | "improvements" | "interview" | "readiness" | "recommendation"
   >("overview");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
-  const score  = Math.round(result.atsScore);
-  const config = getScoreConfig(score);
+  const score    = Math.round(result.atsScore);
+  const config   = getScoreConfig(score);
+  const readiness = calcCareerReadiness(result, score);
+  const readinessLabel = getReadinessLabel(readiness.overall);
 
   const TABS = [
-    { key: "overview",       label: "Overview"       },
-    { key: "skills",         label: "Skill Gaps"     },
-    { key: "improvements",   label: "Improvements"   },
-    { key: "interview",      label: "Interview Prep" },
-    { key: "recommendation", label: "Verdict"        },
+    { key: "overview",        label: "Overview"          },
+    { key: "skills",          label: "Skill Gaps"        },
+    { key: "improvements",    label: "Improvements"      },
+    { key: "interview",       label: "Interview Prep"    },
+    { key: "readiness",       label: "Career Readiness"  },
+    { key: "recommendation",  label: "Verdict"           },
   ] as const;
 
   async function handleDownloadPdf() {
     setIsGeneratingPdf(true);
-    try {
-      await generatePdfReport(result, jobRole ?? "Not specified", score, config);
-    } catch (err) {
-      console.error("PDF generation failed:", err);
-    } finally {
-      setIsGeneratingPdf(false);
-    }
+    try { await generatePdfReport(result, jobRole ?? "Not specified", score, config); }
+    catch (err) { console.error("PDF generation failed:", err); }
+    finally { setIsGeneratingPdf(false); }
   }
 
+  /* ── shared card style ── */
+  const card: React.CSSProperties = {
+    background: "#fff",
+    border: "1px solid #e8e8e8",
+    borderRadius: "14px",
+    padding: "24px",
+  };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
 
       {/* ── Top header card ── */}
-      <div className="rounded-2xl p-6"
-           style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-        <div className="flex flex-wrap items-center justify-between gap-4">
+      <div style={card}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
           <div>
-            <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.4rem" }}>
-              Analysis Complete
+            <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>
+              Analysis complete
             </p>
-            <p style={{ fontSize: "1.4rem", fontWeight: 800, color: "white", letterSpacing: "-0.02em" }}>
+            <p style={{ fontSize: "1.3rem", fontWeight: 750, color: "#0a0a0a", letterSpacing: "-0.03em" }}>
               CV vs Job Description
             </p>
-            <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
               <span
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold"
-                style={{ background: config.color + "15", color: config.color, border: `1px solid ${config.color}30` }}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: "6px",
+                  padding: "4px 12px", borderRadius: "20px",
+                  fontSize: "12px", fontWeight: 600,
+                  background: readinessLabel.bg,
+                  color: readinessLabel.color,
+                  border: `1px solid ${readinessLabel.border}`,
+                }}
               >
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: config.color }} />
+                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: readinessLabel.color, display: "inline-block" }} />
                 {config.label}
               </span>
               {(result as { fromCache?: boolean }).fromCache && (
                 <span
-                  className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium"
-                  style={{ background: "#1e1e1e", color: "#666", border: "1px solid #2a2a2a" }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "6px",
+                    padding: "4px 10px", borderRadius: "20px",
+                    fontSize: "11.5px", fontWeight: 500,
+                    background: "#f5f5f5", color: "#888", border: "1px solid #eee",
+                  }}
                 >
                   Cached result
                 </span>
@@ -477,53 +429,74 @@ export function AnalysisResults({ result, savedAnalysisId, saveWarning, jobRole 
           <ScoreRing score={score} color={config.color} />
         </div>
 
-        {/* Action buttons row */}
-        <div className="flex flex-wrap gap-3 mt-5">
-          {/* Download PDF */}
+        {/* Actions */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: "20px" }}>
           <button
             onClick={() => void handleDownloadPdf()}
             disabled={isGeneratingPdf}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90 disabled:opacity-50"
-            style={{ background: "#1e1e1e", border: "1px solid #2a2a2a", color: "white" }}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: "7px",
+              background: "#f5f5f5", border: "1px solid #e4e4e4",
+              color: "#0a0a0a", fontSize: "13px", fontWeight: 550,
+              padding: "9px 16px", borderRadius: "9px",
+              cursor: isGeneratingPdf ? "not-allowed" : "pointer",
+              opacity: isGeneratingPdf ? 0.6 : 1, fontFamily: "inherit",
+            }}
           >
             {isGeneratingPdf
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating PDF…</>
-              : <><Download className="w-4 h-4" /> Download PDF Report</>
-            }
+              ? <><Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Generating PDF…</>
+              : <><Download size={14} /> Download PDF</>}
           </button>
-
-          {/* Full report link */}
           {savedAnalysisId && (
             <Link
               href={`/reports/${savedAnalysisId}`}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
-              style={{ background: "#7C3AED", color: "white" }}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: "7px",
+                background: "#0a0a0a", color: "#fff",
+                fontSize: "13px", fontWeight: 550,
+                padding: "9px 16px", borderRadius: "9px",
+                textDecoration: "none",
+              }}
             >
-              <FileBarChart className="w-4 h-4" /> View Full Report
+              <FileBarChart size={14} /> View full report
             </Link>
           )}
         </div>
 
         {saveWarning && (
-          <div className="mt-4 rounded-xl px-4 py-3 text-sm"
-               style={{ background: "#1a1500", border: "1px solid #3a2e00", color: "#fbbf24" }}>
+          <div style={{ marginTop: "14px", padding: "10px 14px", borderRadius: "9px", background: "#fffbeb", border: "1px solid #fde68a", fontSize: "12.5px", color: "#92400e" }}>
             {saveWarning}
           </div>
         )}
       </div>
 
       {/* ── Tabs ── */}
-      <div className="flex gap-1 p-1 rounded-xl flex-wrap"
-           style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
+      <div
+        style={{
+          display: "flex", gap: "2px", padding: "4px",
+          background: "#f5f5f5", border: "1px solid #eee",
+          borderRadius: "12px", flexWrap: "wrap",
+        }}
+      >
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
-            className="flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap"
             style={{
-              background: activeTab === t.key ? "#7C3AED" : "transparent",
-              color:      activeTab === t.key ? "white"   : "#666",
+              flex: 1,
+              padding: "8px 12px",
+              borderRadius: "9px",
+              fontSize: "12.5px",
+              fontWeight: 550,
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap",
               minWidth: "80px",
+              transition: "all 0.15s",
+              background: activeTab === t.key ? "#fff" : "transparent",
+              color:      activeTab === t.key ? "#0a0a0a" : "#888",
+              boxShadow:  activeTab === t.key ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
             }}
           >
             {t.label}
@@ -533,75 +506,71 @@ export function AnalysisResults({ result, savedAnalysisId, saveWarning, jobRole 
 
       {/* ── Overview ── */}
       {activeTab === "overview" && (
-        <div className="flex flex-col gap-4">
-          <div className="rounded-2xl p-6" style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-            <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "1rem" }}>
-              ATS Score Breakdown
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          <div style={card}>
+            <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "16px" }}>
+              ATS score breakdown
             </p>
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <span style={{ fontSize: "0.85rem", color: "#aaa" }}>Match percentage</span>
-                <span style={{ fontSize: "0.9rem", fontWeight: 700, color: config.color }}>{score}%</span>
+            <div style={{ marginBottom: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                <span style={{ fontSize: "13px", color: "#555" }}>Match percentage</span>
+                <span style={{ fontSize: "13.5px", fontWeight: 700, color: config.color }}>{score}%</span>
               </div>
-              <div className="h-2.5 rounded-full overflow-hidden" style={{ background: "#1e1e1e" }}>
-                <div className="h-full rounded-full transition-all duration-1000"
-                     style={{ width: `${score}%`, background: config.color }} />
+              <div style={{ height: "6px", background: "#f0f0f0", borderRadius: "3px", overflow: "hidden" }}>
+                <div style={{ width: `${score}%`, height: "100%", background: config.color, borderRadius: "3px", transition: "width 1s ease" }} />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3 mt-5">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginTop: "16px" }}>
               {[
-                { label: "Skills Match",   value: `${Math.min(100, score + 5)}%`   },
-                { label: "Missing Skills", value: `${result.missingSkills.length}` },
-                { label: "Improvements",   value: `${result.improvements.length}`  },
+                { label: "Skills match",   value: `${readiness.skillsMatch}%` },
+                { label: "Missing skills", value: `${result.missingSkills.length}` },
+                { label: "Improvements",   value: `${result.improvements.length}` },
               ].map((m) => (
-                <div key={m.label} className="rounded-xl p-3 text-center"
-                     style={{ background: "#0f0f0f", border: "1px solid #1e1e1e" }}>
-                  <p style={{ fontSize: "1.4rem", fontWeight: 800, color: "white", letterSpacing: "-0.02em" }}>
-                    {m.value}
-                  </p>
-                  <p style={{ fontSize: "0.72rem", color: "#555", marginTop: "0.2rem" }}>{m.label}</p>
+                <div key={m.label} style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: "10px", padding: "14px", textAlign: "center" }}>
+                  <p style={{ fontSize: "1.5rem", fontWeight: 750, color: "#0a0a0a", letterSpacing: "-0.03em", lineHeight: 1 }}>{m.value}</p>
+                  <p style={{ fontSize: "11.5px", color: "#aaa", marginTop: "4px" }}>{m.label}</p>
                 </div>
               ))}
             </div>
           </div>
-          <div className="rounded-2xl p-6" style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-            <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.75rem" }}>
+          <div style={card}>
+            <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "12px" }}>
               Summary
             </p>
-            <p style={{ color: "#bbb", lineHeight: 1.8, fontSize: "0.95rem" }}>{result.explanation}</p>
+            <p style={{ color: "#555", lineHeight: 1.8, fontSize: "14px" }}>{result.explanation}</p>
           </div>
         </div>
       )}
 
       {/* ── Skill Gaps ── */}
       {activeTab === "skills" && (
-        <div className="rounded-2xl p-6" style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-          <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "1.25rem" }}>
-            Missing Skills — {result.missingSkills.length} identified
+        <div style={card}>
+          <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "16px" }}>
+            Missing skills — {result.missingSkills.length} identified
           </p>
           {result.missingSkills.length === 0 ? (
-            <div className="flex items-center gap-3 py-4">
-              <CheckCircle2 className="w-5 h-5" style={{ color: "#22c55e" }} />
-              <p style={{ color: "#aaa" }}>No major skill gaps identified.</p>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "16px 0" }}>
+              <CheckCircle2 size={18} style={{ color: "#22c55e" }} />
+              <p style={{ color: "#555", fontSize: "13.5px" }}>No major skill gaps identified.</p>
             </div>
           ) : (
             (["high", "medium", "low"] as const).map((level) => {
               const skills = result.missingSkills.filter((s) => s.importance === level);
               if (!skills.length) return null;
               const cfg = {
-                high:   { label: "High Priority",   color: "#ef4444", bg: "#1a0000", border: "#3a0000" },
-                medium: { label: "Medium Priority",  color: "#f59e0b", bg: "#1a1000", border: "#3a2000" },
-                low:    { label: "Low Priority",     color: "#888",    bg: "#111",    border: "#222"    },
+                high:   { label: "High priority",   color: "#991b1b", bg: "#fef2f2", border: "#fecaca" },
+                medium: { label: "Medium priority",  color: "#92400e", bg: "#fffbeb", border: "#fde68a" },
+                low:    { label: "Low priority",     color: "#555",    bg: "#f5f5f5", border: "#e8e8e8" },
               }[level];
               return (
-                <div key={level} className="mb-5">
-                  <p style={{ fontSize: "0.75rem", fontWeight: 600, color: cfg.color, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                <div key={level} style={{ marginBottom: "20px" }}>
+                  <p style={{ fontSize: "11px", fontWeight: 600, color: cfg.color, marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                     {cfg.label}
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "7px" }}>
                     {skills.map((skill) => (
-                      <span key={skill.name} className="px-3 py-1.5 rounded-lg text-sm font-medium"
-                            style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color }}>
+                      <span key={skill.name}
+                        style={{ padding: "5px 12px", borderRadius: "7px", fontSize: "12.5px", fontWeight: 500, background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color }}>
                         {skill.name}
                       </span>
                     ))}
@@ -615,46 +584,31 @@ export function AnalysisResults({ result, savedAnalysisId, saveWarning, jobRole 
 
       {/* ── Improvements ── */}
       {activeTab === "improvements" && (
-        <div className="flex flex-col gap-3">
-          <div className="rounded-2xl px-6 pt-6 pb-2"
-               style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-            <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.4rem" }}>
-              Top 5 CV Improvements
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ ...card, paddingBottom: "16px" }}>
+            <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>
+              Top 5 CV improvements
             </p>
-            <p style={{ fontSize: "0.85rem", color: "#555", marginBottom: "1.25rem" }}>
-              Apply these changes to significantly improve your ATS score.
-            </p>
+            <p style={{ fontSize: "13px", color: "#aaa" }}>Apply these changes to improve your ATS score.</p>
           </div>
           {result.improvements.map((item, i) => (
-            <div key={i} className="rounded-2xl overflow-hidden"
-                 style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-              <div className="px-6 py-4" style={{ borderBottom: "1px solid #1e1e1e" }}>
-                <div className="flex items-start gap-3">
-                  <span className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold mt-0.5"
-                        style={{ background: "#7C3AED20", color: "#7C3AED", border: "1px solid #7C3AED30" }}>
+            <div key={i} style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", overflow: "hidden" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid #f0f0f0" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                  <span style={{ flexShrink: 0, width: "26px", height: "26px", borderRadius: "7px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, background: "#f5f5f5", color: "#555", border: "1px solid #eee", marginTop: "1px" }}>
                     {i + 1}
                   </span>
-                  <p style={{ fontWeight: 600, color: "white", fontSize: "0.95rem", lineHeight: 1.5 }}>
-                    {item.suggestion}
-                  </p>
+                  <p style={{ fontWeight: 600, color: "#0a0a0a", fontSize: "13.5px", lineHeight: 1.5 }}>{item.suggestion}</p>
                 </div>
               </div>
-              <div className="grid sm:grid-cols-2 gap-0">
-                <div className="p-5" style={{ borderRight: "1px solid #1e1e1e" }}>
-                  <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "#ef4444", marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    Before
-                  </p>
-                  <p style={{ fontSize: "0.85rem", color: "#888", lineHeight: 1.7, fontStyle: "italic" }}>
-                    "{item.before}"
-                  </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }} className="improvement-cols">
+                <div style={{ padding: "16px 20px", borderRight: "1px solid #f0f0f0" }}>
+                  <p style={{ fontSize: "10px", fontWeight: 700, color: "#dc2626", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>Before</p>
+                  <p style={{ fontSize: "13px", color: "#888", lineHeight: 1.7, fontStyle: "italic" }}>"{item.before}"</p>
                 </div>
-                <div className="p-5">
-                  <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "#22c55e", marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    After
-                  </p>
-                  <p style={{ fontSize: "0.85rem", color: "#bbb", lineHeight: 1.7 }}>
-                    "{item.after}"
-                  </p>
+                <div style={{ padding: "16px 20px" }}>
+                  <p style={{ fontSize: "10px", fontWeight: 700, color: "#16a34a", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.08em" }}>After</p>
+                  <p style={{ fontSize: "13px", color: "#555", lineHeight: 1.7 }}>"{item.after}"</p>
                 </div>
               </div>
             </div>
@@ -664,14 +618,14 @@ export function AnalysisResults({ result, savedAnalysisId, saveWarning, jobRole 
 
       {/* ── Interview Prep ── */}
       {activeTab === "interview" && (
-        <div className="rounded-2xl p-6" style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-          <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.4rem" }}>
-            Interview Questions
+        <div style={card}>
+          <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>
+            Interview questions
           </p>
-          <p style={{ fontSize: "0.85rem", color: "#555", marginBottom: "1.25rem" }}>
+          <p style={{ fontSize: "13px", color: "#aaa", marginBottom: "16px" }}>
             Click any question to reveal the model answer.
           </p>
-          <div className="flex flex-col gap-2">
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {result.interviewQuestions.map((item, i) => (
               <QuestionCard key={i} item={item} index={i} />
             ))}
@@ -679,64 +633,176 @@ export function AnalysisResults({ result, savedAnalysisId, saveWarning, jobRole 
         </div>
       )}
 
+      {/* ── Career Readiness ── */}
+      {activeTab === "readiness" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+
+          {/* Big score card */}
+          <div style={{ ...card, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "20px" }}>
+            <div style={{ flex: 1, minWidth: "200px" }}>
+              <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "10px" }}>
+                Career readiness score
+              </p>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "6px", marginBottom: "10px" }}>
+                <span style={{ fontSize: "3.5rem", fontWeight: 800, color: "#0a0a0a", letterSpacing: "-0.05em", lineHeight: 1 }}>
+                  {readiness.overall}
+                </span>
+                <span style={{ fontSize: "1.2rem", color: "#bbb", fontWeight: 400 }}>/100</span>
+              </div>
+              <span
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: "6px",
+                  padding: "5px 14px", borderRadius: "20px",
+                  fontSize: "12px", fontWeight: 600,
+                  background: readinessLabel.bg,
+                  color: readinessLabel.color,
+                  border: `1px solid ${readinessLabel.border}`,
+                }}
+              >
+                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: readinessLabel.color, display: "inline-block" }} />
+                {readinessLabel.label}
+              </span>
+            </div>
+            {/* Mini ring */}
+            <div style={{ flexShrink: 0 }}>
+              <svg width="110" height="110" viewBox="0 0 110 110">
+                <circle cx="55" cy="55" r="44" fill="none" stroke="#f0f0f0" strokeWidth="8" />
+                <circle
+                  cx="55" cy="55" r="44"
+                  fill="none"
+                  stroke={readiness.overall >= 85 ? "#22c55e" : readiness.overall >= 70 ? "#f59e0b" : "#ef4444"}
+                  strokeWidth="8"
+                  strokeLinecap="round"
+                  strokeDasharray={`${(readiness.overall / 100) * 2 * Math.PI * 44} ${2 * Math.PI * 44}`}
+                  strokeDashoffset={2 * Math.PI * 44 * 0.25}
+                  style={{ transition: "stroke-dasharray 1s ease" }}
+                />
+                <text x="55" y="50" textAnchor="middle" style={{ fill: "#0a0a0a", fontSize: "20px", fontWeight: 800 }}>
+                  {readiness.overall}
+                </text>
+                <text x="55" y="66" textAnchor="middle" style={{ fill: "#aaa", fontSize: "9px" }}>
+                  / 100
+                </text>
+              </svg>
+            </div>
+          </div>
+
+          {/* Sub-metric bars */}
+          <div style={card}>
+            <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "20px" }}>
+              Score breakdown
+            </p>
+            <MetricBar
+              label="ATS Match"
+              value={score}
+              sublabel="How well your CV matches the job description"
+              color={score >= 70 ? "#22c55e" : score >= 50 ? "#f59e0b" : "#ef4444"}
+            />
+            <MetricBar
+              label="Skills Match"
+              value={readiness.skillsMatch}
+              sublabel="Keyword and skills alignment"
+              color={readiness.skillsMatch >= 70 ? "#22c55e" : readiness.skillsMatch >= 50 ? "#f59e0b" : "#ef4444"}
+            />
+            <MetricBar
+              label="Resume Quality"
+              value={readiness.resumeQuality}
+              sublabel="Strength of your current CV content"
+              color={readiness.resumeQuality >= 70 ? "#22c55e" : readiness.resumeQuality >= 50 ? "#f59e0b" : "#ef4444"}
+            />
+            <MetricBar
+              label="Interview Readiness"
+              value={readiness.interviewReadiness}
+              sublabel="Estimated readiness for interview questions"
+              color={readiness.interviewReadiness >= 70 ? "#22c55e" : readiness.interviewReadiness >= 50 ? "#f59e0b" : "#ef4444"}
+            />
+            <MetricBar
+              label="Improvement Urgency"
+              value={readiness.improvUrgency}
+              sublabel="Higher = fewer urgent changes needed"
+              color={readiness.improvUrgency >= 70 ? "#22c55e" : readiness.improvUrgency >= 50 ? "#f59e0b" : "#ef4444"}
+            />
+          </div>
+
+          {/* Four metric mini-cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "12px" }}>
+            {[
+              { label: "Resume Quality",      value: readiness.resumeQuality,      desc: "Based on ATS score and improvement count" },
+              { label: "Skills Match",         value: readiness.skillsMatch,         desc: "Keyword alignment with job description"    },
+              { label: "Interview Readiness",  value: readiness.interviewReadiness,  desc: "Estimated readiness for common questions"  },
+              { label: "Improvement Urgency",  value: readiness.improvUrgency,       desc: "Higher score = fewer critical gaps"         },
+            ].map((m) => {
+              const c = m.value >= 70 ? "#22c55e" : m.value >= 50 ? "#f59e0b" : "#ef4444";
+              const bg = m.value >= 70 ? "#f0faf4" : m.value >= 50 ? "#fffbeb" : "#fef2f2";
+              const border = m.value >= 70 ? "#c8ecd8" : m.value >= 50 ? "#fde68a" : "#fecaca";
+              return (
+                <div key={m.label} style={{ background: bg, border: `1px solid ${border}`, borderRadius: "12px", padding: "18px" }}>
+                  <p style={{ fontSize: "11.5px", color: c, fontWeight: 600, marginBottom: "6px" }}>{m.label}</p>
+                  <p style={{ fontSize: "1.8rem", fontWeight: 800, color: "#0a0a0a", letterSpacing: "-0.04em", lineHeight: 1, marginBottom: "4px" }}>
+                    {m.value}<span style={{ fontSize: "0.9rem", color: "#bbb", fontWeight: 400 }}>%</span>
+                  </p>
+                  <p style={{ fontSize: "11px", color: "#888", lineHeight: 1.5 }}>{m.desc}</p>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Recommendation box */}
+          <div style={{ ...card, borderLeft: "3px solid #0a0a0a" }}>
+            <p style={{ fontSize: "11px", fontWeight: 700, color: "#0a0a0a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "8px" }}>
+              Recommendation
+            </p>
+            <p style={{ fontSize: "14px", color: "#555", lineHeight: 1.75 }}>
+              {readiness.overall >= 85
+                ? "You're a strong candidate for this role. Focus on interview preparation and practising your responses to the generated questions."
+                : readiness.overall >= 70
+                ? "You have a good foundation but targeted improvements will increase your chances. Apply the CV suggestions and address medium-priority skill gaps before applying."
+                : "Your profile needs focused improvement before applying. Address the high-priority skill gaps, rewrite the flagged CV sections, and then run another analysis to track your progress."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Verdict ── */}
       {activeTab === "recommendation" && (
-        <div className="flex flex-col gap-4">
-          <div className="rounded-2xl p-6" style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-            <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "1rem" }}>
-              Overall Readiness
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          <div style={card}>
+            <p style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "16px" }}>
+              Overall readiness
             </p>
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0"
-                   style={{ background: config.color + "15", border: `1px solid ${config.color}30` }}>
-                <TrendingUp className="w-7 h-7" style={{ color: config.color }} />
+            <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+              <div style={{ width: "52px", height: "52px", borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", background: readinessLabel.bg, border: `1px solid ${readinessLabel.border}`, flexShrink: 0 }}>
+                <TrendingUp size={22} style={{ color: readinessLabel.color }} />
               </div>
               <div>
-                <p style={{ fontSize: "1.4rem", fontWeight: 800, color: config.color, letterSpacing: "-0.02em" }}>
-                  {config.recommendation} Match
+                <p style={{ fontSize: "1.3rem", fontWeight: 750, color: "#0a0a0a", letterSpacing: "-0.03em" }}>
+                  {config.recommendation} match
                 </p>
-                <p style={{ fontSize: "0.9rem", color: "#888", marginTop: "0.2rem" }}>{config.sublabel}</p>
+                <p style={{ fontSize: "13.5px", color: "#888", marginTop: "2px" }}>{config.sublabel}</p>
               </div>
             </div>
           </div>
 
-          <div className="grid sm:grid-cols-3 gap-3">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px" }}>
             {[
-              { label: "ATS Score",    value: `${score}%`, sub: config.label },
-              {
-                label: "Primary Gap",
-                value: result.missingSkills.find((s) => s.importance === "high")?.name
-                  ?? result.missingSkills[0]?.name ?? "None",
-                sub: "Highest priority skill",
-              },
-              {
-                label: "Skills to Add",
-                value: `${result.missingSkills.length}`,
-                sub: `${result.missingSkills.filter((s) => s.importance === "high").length} high priority`,
-              },
+              { label: "ATS score",    value: `${score}%`, sub: config.label },
+              { label: "Primary gap",  value: result.missingSkills.find((s) => s.importance === "high")?.name ?? result.missingSkills[0]?.name ?? "None", sub: "Highest priority skill" },
+              { label: "Skills to add", value: `${result.missingSkills.length}`, sub: `${result.missingSkills.filter((s) => s.importance === "high").length} high priority` },
             ].map((m) => (
-              <div key={m.label} className="rounded-2xl p-5"
-                   style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-                <p style={{ fontSize: "0.7rem", fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.5rem" }}>
-                  {m.label}
-                </p>
-                <p style={{ fontSize: m.label === "Primary Gap" ? "0.95rem" : "2rem", fontWeight: 800, color: "white", letterSpacing: m.label === "Primary Gap" ? "0" : "-0.03em", lineHeight: 1.2 }}>
-                  {m.value}
-                </p>
-                <p style={{ fontSize: "0.75rem", color: "#555", marginTop: "0.3rem" }}>{m.sub}</p>
+              <div key={m.label} style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: "12px", padding: "18px" }}>
+                <p style={{ fontSize: "10.5px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>{m.label}</p>
+                <p style={{ fontSize: m.label === "Primary gap" ? "0.95rem" : "1.8rem", fontWeight: 750, color: "#0a0a0a", letterSpacing: "-0.03em", lineHeight: 1.2 }}>{m.value}</p>
+                <p style={{ fontSize: "11.5px", color: "#aaa", marginTop: "4px" }}>{m.sub}</p>
               </div>
             ))}
           </div>
 
-          <div className="rounded-2xl p-6"
-               style={{ background: "#141414", border: `1px solid ${config.color}30` }}>
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" style={{ color: config.color }} />
+          <div style={{ ...card, borderLeft: "3px solid #0a0a0a" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+              <CheckCircle2 size={18} style={{ color: "#0a0a0a", flexShrink: 0, marginTop: "2px" }} />
               <div>
-                <p style={{ fontWeight: 700, color: "white", fontSize: "1rem", marginBottom: "0.4rem" }}>
-                  Recommended Next Action
-                </p>
-                <p style={{ color: "#aaa", fontSize: "0.9rem", lineHeight: 1.7 }}>{config.action}</p>
+                <p style={{ fontWeight: 650, color: "#0a0a0a", fontSize: "14px", marginBottom: "6px" }}>Recommended next action</p>
+                <p style={{ color: "#555", fontSize: "13.5px", lineHeight: 1.75 }}>{config.action}</p>
               </div>
             </div>
           </div>
@@ -744,15 +810,26 @@ export function AnalysisResults({ result, savedAnalysisId, saveWarning, jobRole 
           {savedAnalysisId && (
             <Link
               href={`/reports/${savedAnalysisId}`}
-              className="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90"
-              style={{ background: "#7C3AED", color: "white" }}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
+                width: "100%", padding: "13px",
+                background: "#0a0a0a", color: "#fff",
+                borderRadius: "10px", fontSize: "13.5px", fontWeight: 600,
+                textDecoration: "none",
+              }}
             >
-              <FileBarChart className="w-4 h-4" />
-              View Full Hiring Readiness Report
+              <FileBarChart size={15} /> View full hiring readiness report
             </Link>
           )}
         </div>
       )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 540px) {
+          .improvement-cols { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }
