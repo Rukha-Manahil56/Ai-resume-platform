@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 import type { InterviewMessage } from "@/lib/interview-types";
 import { mapGeminiError } from "@/lib/map-gemini-error";
 
 export const runtime = "nodejs";
 
-const GEMINI_MODELS = [
-  "gemini-2.0-flash-lite", 
-  "gemini-2.0-flash",
-];
+const GEMINI_MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"];
+const GROQ_MODEL    = "llama-3.3-70b-versatile";
 
 export type InterviewStage =
   | "introduction"
@@ -18,6 +17,7 @@ export type InterviewStage =
   | "closing"
   | "complete";
 
+/* ── Prompts ── */
 function buildSystemPrompt(jobRole: string, stage: InterviewStage): string {
   const stageInstructions: Record<InterviewStage, string> = {
     introduction: `
@@ -82,34 +82,14 @@ YOUR RULES — follow these strictly:
 8. Make the interview feel realistic, current, and role-specific.`;
 }
 
-function toGeminiContents(messages: InterviewMessage[]) {
-  return messages.map((msg) => ({
-    role: msg.role === "assistant" ? ("model" as const) : ("user" as const),
-    parts: [{ text: msg.content }],
-  }));
-}
-
-function getStageFromMessageCount(count: number): InterviewStage {
-  if (count <= 4) return "introduction";
-  if (count <= 10) return "technical";
-  if (count <= 16) return "behavioral";
-  if (count <= 20) return "situational";
-  if (count <= 24) return "closing";
-  return "complete";
-}
-
+/* ── Helpers ── */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getErrorStatus(error: unknown): number | undefined {
-  return (error as { status?: number })?.status;
-}
-
-function isRetryableGeminiError(error: unknown): boolean {
-  const status = getErrorStatus(error);
+function isRetryable(error: unknown): boolean {
+  const status  = (error as { status?: number })?.status;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
-
   return (
     status === 429 ||
     status === 503 ||
@@ -121,10 +101,122 @@ function isRetryableGeminiError(error: unknown): boolean {
   );
 }
 
-export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY;
+function toGeminiContents(messages: InterviewMessage[]) {
+  return messages.map((msg) => ({
+    role: msg.role === "assistant" ? ("model" as const) : ("user" as const),
+    parts: [{ text: msg.content }],
+  }));
+}
 
+function getStageFromMessageCount(count: number): InterviewStage {
+  if (count <= 4)  return "introduction";
+  if (count <= 10) return "technical";
+  if (count <= 16) return "behavioral";
+  if (count <= 20) return "situational";
+  if (count <= 24) return "closing";
+  return "complete";
+}
+
+/* ── Step 1 & 2: Try a single Gemini API key across all models ── */
+async function tryGeminiKey(
+  apiKey: string,
+  keyLabel: string,
+  messages: InterviewMessage[],
+  jobRole: string,
+  stage: InterviewStage
+): Promise<string | null> {
+  const ai = new GoogleGenAI({ apiKey });
+
+  for (const modelName of GEMINI_MODELS) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        console.log(`[interview] ${keyLabel} — model ${modelName}, attempt ${attempt + 1}`);
+
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: toGeminiContents(messages),
+          config: {
+            systemInstruction: buildSystemPrompt(jobRole, stage),
+            temperature: 0.75,
+          },
+        });
+
+        const reply = response.text?.trim();
+        if (!reply) throw new Error("Empty response from AI.");
+
+        console.log(`[interview] Success — ${keyLabel}, model ${modelName}`);
+        return reply;
+
+      } catch (err) {
+        if (isRetryable(err)) {
+          console.warn(`[interview] ${keyLabel} ${modelName} busy, retrying ${attempt + 1}/3`);
+          await sleep((attempt + 1) * 2000);
+          continue;
+        }
+        console.warn(`[interview] ${keyLabel} ${modelName} failed:`, err);
+        break;
+      }
+    }
+  }
+
+  return null;
+}
+
+/* ── Step 3: Groq fallback ── */
+async function tryGroq(
+  messages: InterviewMessage[],
+  jobRole: string,
+  stage: InterviewStage
+): Promise<string | null> {
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
+    console.warn("[interview] GROQ_API_KEY not configured — skipping Groq fallback");
+    return null;
+  }
+
+  try {
+    console.log("[interview] Trying Groq fallback");
+    const groq = new Groq({ apiKey });
+
+    /* Convert messages to Groq format */
+    const groqMessages: { role: "system" | "user" | "assistant"; content: string }[] = [
+      {
+        role: "system",
+        content: buildSystemPrompt(jobRole, stage),
+      },
+      ...messages.map((msg) => ({
+        role: msg.role === "assistant"
+          ? ("assistant" as const)
+          : ("user" as const),
+        content: msg.content,
+      })),
+    ];
+
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: groqMessages,
+      temperature: 0.75,
+      max_tokens: 1024,
+    });
+
+    const reply = completion.choices[0]?.message?.content?.trim();
+    if (!reply) throw new Error("Empty response from Groq");
+
+    console.log("[interview] Groq fallback success");
+    return reply;
+
+  } catch (err) {
+    console.error("[interview] Groq fallback failed:", err);
+    return null;
+  }
+}
+
+/* ── Main handler ── */
+export async function POST(request: NextRequest) {
+  const geminiKey1 = process.env.GEMINI_API_KEY;
+  const geminiKey2 = process.env.GEMINI_API_KEY_2;
+
+  if (!geminiKey1) {
     return NextResponse.json(
       { error: "AI service is not configured." },
       { status: 500 }
@@ -138,9 +230,9 @@ export async function POST(request: NextRequest) {
       stage?: InterviewStage;
     };
 
-    const jobRole = body.jobRole?.trim();
+    const jobRole  = body.jobRole?.trim();
     const messages = body.messages ?? [];
-    const stage = body.stage ?? getStageFromMessageCount(messages.length);
+    const stage    = body.stage ?? getStageFromMessageCount(messages.length);
 
     if (!jobRole) {
       return NextResponse.json(
@@ -156,95 +248,48 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const lastMessage = messages[messages.length - 1];
-
-    if (lastMessage.role !== "user") {
+    if (messages[messages.length - 1].role !== "user") {
       return NextResponse.json(
         { error: "Last message must be from the user." },
         { status: 400 }
       );
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    /* ── Step 1: Try Gemini key 1 ── */
+    let reply = await tryGeminiKey(geminiKey1, "Gemini key 1", messages, jobRole, stage);
 
-    let response;
-    let lastError: unknown;
-    let usedModel = GEMINI_MODELS[0];
-
-    for (const modelName of GEMINI_MODELS) {
-      usedModel = modelName;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          console.log(
-            `[interview] Trying model ${modelName}, attempt ${attempt + 1}`
-          );
-
-          response = await ai.models.generateContent({
-            model: modelName,
-            contents: toGeminiContents(messages),
-            config: {
-              systemInstruction: buildSystemPrompt(jobRole, stage),
-              temperature: 0.75,
-            },
-          });
-
-          break;
-        } catch (err: unknown) {
-          lastError = err;
-
-          if (isRetryableGeminiError(err)) {
-            console.warn(
-              `[interview] Model ${modelName} busy. Retrying attempt ${
-                attempt + 1
-              }/3...`
-            );
-
-            await sleep((attempt + 1) * 2000);
-            continue;
-          }
-
-          throw err;
-        }
-      }
-
-      if (response) {
-        console.log(`[interview] Success using model: ${usedModel}`);
-        break;
-      }
-
-      console.warn(`[interview] Switching from ${modelName} to fallback model.`);
+    /* ── Step 2: Try Gemini key 2 ── */
+    if (!reply && geminiKey2) {
+      reply = await tryGeminiKey(geminiKey2, "Gemini key 2", messages, jobRole, stage);
     }
 
-    if (!response) {
-      throw lastError;
+    /* ── Step 3: Try Groq fallback ── */
+    if (!reply) {
+      reply = await tryGroq(messages, jobRole, stage);
     }
 
-    const reply = response.text?.trim();
-
+    /* ── Step 4: All providers failed ── */
     if (!reply) {
       return NextResponse.json(
-        { error: "Empty response from AI." },
-        { status: 502 }
+        {
+          error: "Our interview AI is experiencing very high demand right now. Please wait 30 seconds and try again.",
+          retryable: true,
+        },
+        { status: 503 }
       );
     }
 
     const nextStage = getStageFromMessageCount(messages.length + 1);
 
-    return NextResponse.json({
-      reply,
-      stage: nextStage,
-      modelUsed: usedModel,
-    });
+    return NextResponse.json({ reply, stage: nextStage });
+
   } catch (error) {
     console.error("[interview]", error);
-
     const { status, body } = mapGeminiError(
       error,
-      "Our AI interviewer is experiencing high demand at the moment. Please wait a few seconds and try again.",
+      "Interview session failed. Please try again in a moment.",
       GEMINI_MODELS[0]
     );
-
     return NextResponse.json(body, { status });
   }
 }

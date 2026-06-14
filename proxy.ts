@@ -40,7 +40,7 @@ export async function proxy(request: NextRequest) {
   }
 
   /* Logged-in user hits login page or landing page → send to dashboard */
-  if ((pathname === "/login" || pathname === "/") && user) {
+  if (pathname === "/login"  && user) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);

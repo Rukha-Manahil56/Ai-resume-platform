@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FileText, Mic, BarChart3, ArrowRight, Plus } from "lucide-react";
+import { FileText, Mic, BarChart3, ArrowRight, Plus, TrendingUp, CheckCircle2, Clock } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 interface Analysis {
@@ -19,11 +19,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const supabase = createClient();
-
     async function load() {
       const { data: { user: u } } = await supabase.auth.getUser();
       setUser(u);
-
       if (u) {
         const { data } = await supabase
           .from("analyses")
@@ -34,7 +32,6 @@ export default function DashboardPage() {
       }
       setLoading(false);
     }
-
     void load();
   }, []);
 
@@ -43,16 +40,10 @@ export default function DashboardPage() {
     ?? user?.email?.split("@")[0]
     ?? "there";
 
-  function getScoreColor(score: number) {
-    if (score >= 70) return "#4ade80";
-    if (score >= 50) return "#fbbf24";
-    return "#f87171";
-  }
-
-  function getScoreLabel(score: number) {
-    if (score >= 70) return "Strong";
-    if (score >= 50) return "Fair";
-    return "Weak";
+  function getScoreBadge(score: number): { label: string; color: string; bg: string; border: string } {
+    if (score >= 70) return { label: "Strong",   color: "#2d7a4f", bg: "#f0faf4", border: "#c8ecd8" };
+    if (score >= 50) return { label: "Fair",     color: "#92400e", bg: "#fffbeb", border: "#fde68a" };
+    return              { label: "Needs work", color: "#991b1b", bg: "#fef2f2", border: "#fecaca" };
   }
 
   function formatDate(dateStr: string) {
@@ -61,164 +52,438 @@ export default function DashboardPage() {
     });
   }
 
+  const latestScore    = analyses[0]?.ats_score ?? null;
+  const totalAnalyses  = analyses.length;
+  const avgScore       = totalAnalyses
+    ? Math.round(analyses.reduce((s, a) => s + a.ats_score, 0) / totalAnalyses)
+    : null;
+
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center" style={{ background: "#0f0f0f" }}>
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-               style={{ borderColor: "#7C3AED", borderTopColor: "transparent" }} />
-          <p style={{ color: "#666", fontSize: "0.9rem" }}>Loading your dashboard…</p>
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#f9f9f9",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              width: "28px", height: "28px",
+              border: "2px solid #e0e0e0",
+              borderTop: "2px solid #0a0a0a",
+              borderRadius: "50%",
+              animation: "spin 0.8s linear infinite",
+              margin: "0 auto 12px",
+            }}
+          />
+          <p style={{ fontSize: "13px", color: "#aaa" }}>Loading your dashboard…</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" style={{ background: "#0f0f0f" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#f9f9f9",
+        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+      }}
+    >
+      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "40px 24px 80px" }}>
 
-      {/* Background grid */}
-      <div className="fixed inset-0 pointer-events-none" style={{
-        backgroundImage: `
-          linear-gradient(rgba(124,58,237,0.03) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(124,58,237,0.03) 1px, transparent 1px)
-        `,
-        backgroundSize: "48px 48px",
-      }} />
-
-      {/* Purple glow */}
-      <div className="fixed top-0 right-0 pointer-events-none" style={{
-        width: "600px", height: "600px",
-        background: "radial-gradient(circle, rgba(124,58,237,0.08) 0%, transparent 70%)",
-      }} />
-
-      <div className="relative mx-auto max-w-5xl px-6 py-10 sm:px-10">
-
-        {/* Welcome */}
-        <div className="mb-10">
-          <h1 style={{ fontSize: "clamp(1.8rem,4vw,2.4rem)", fontWeight: 800, color: "white", letterSpacing: "-0.03em" }}>
-            Welcome back, {displayName} 👋
+        {/* ── Welcome ── */}
+        <div style={{ marginBottom: "36px" }}>
+          <div
+            style={{
+              fontSize: "11px", fontWeight: 600,
+              letterSpacing: "0.08em", textTransform: "uppercase",
+              color: "#aaa", marginBottom: "8px",
+            }}
+          >
+            Dashboard
+          </div>
+          <h1
+            style={{
+              fontSize: "clamp(1.5rem, 3vw, 2rem)",
+              fontWeight: 750,
+              color: "#0a0a0a",
+              letterSpacing: "-0.03em",
+              lineHeight: 1.2,
+              marginBottom: "8px",
+            }}
+          >
+            Welcome back, {displayName}
           </h1>
-          <p style={{ color: "#666", fontSize: "1rem", marginTop: "0.4rem" }}>
-            Here's your career progress overview
+          <p style={{ fontSize: "14px", color: "#888", lineHeight: 1.6 }}>
+            Track your resume performance, interview readiness, and recent reports.
           </p>
         </div>
 
-        {/* Action cards */}
-        <div className="grid gap-4 sm:grid-cols-3 mb-12">
-          {ACTIONS.map((a) => (
-            <Link key={a.title} href={a.href}
-              className="group block rounded-2xl p-6 transition-all"
-              style={{ border: "1px solid #1e1e1e", background: "#141414" }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = a.accent;
-                (e.currentTarget as HTMLElement).style.background = "#1a1a1a";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = "#1e1e1e";
-                (e.currentTarget as HTMLElement).style.background = "#141414";
+        {/* ── Metric cards ── */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: "14px",
+            marginBottom: "32px",
+          }}
+          className="metrics-grid"
+        >
+          {[
+            {
+              label: "Latest ATS score",
+              value: latestScore !== null ? `${latestScore}%` : "—",
+              sub: latestScore !== null
+                ? latestScore >= 70 ? "Strong match" : latestScore >= 50 ? "Fair match" : "Needs work"
+                : "No analysis yet",
+              icon: TrendingUp,
+            },
+            {
+              label: "Analyses completed",
+              value: totalAnalyses > 0 ? String(totalAnalyses) : "0",
+              sub: totalAnalyses === 1 ? "1 resume analyzed" : `${totalAnalyses} resumes analyzed`,
+              icon: FileText,
+            },
+            {
+              label: "Avg. ATS score",
+              value: avgScore !== null ? `${avgScore}%` : "—",
+              sub: "Across all analyses",
+              icon: BarChart3,
+            },
+            {
+              label: "Career readiness",
+              value: avgScore !== null
+                ? avgScore >= 70 ? "Good" : avgScore >= 50 ? "Fair" : "Early"
+                : "—",
+              sub: "Based on your scores",
+              icon: CheckCircle2,
+            },
+          ].map((m) => (
+            <div
+              key={m.label}
+              style={{
+                background: "#fff",
+                border: "1px solid #e8e8e8",
+                borderRadius: "12px",
+                padding: "20px",
               }}
             >
-              <div className="mb-3 w-10 h-10 rounded-xl flex items-center justify-center"
-                   style={{ background: a.accent + "20" }}>
-                <a.icon className="w-5 h-5" style={{ color: a.accent }} />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "14px",
+                }}
+              >
+                <span style={{ fontSize: "12px", color: "#aaa", fontWeight: 500 }}>
+                  {m.label}
+                </span>
+                <div
+                  style={{
+                    width: "28px", height: "28px",
+                    background: "#f5f5f5",
+                    border: "1px solid #eee",
+                    borderRadius: "7px",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <m.icon size={13} style={{ color: "#888" }} />
+                </div>
               </div>
-              <p style={{ fontWeight: 700, fontSize: "1rem", color: "white", marginBottom: "0.3rem" }}>
-                {a.title}
-              </p>
-              <p style={{ fontSize: "0.85rem", color: "#666", lineHeight: 1.5 }}>{a.desc}</p>
-              <div className="mt-4 flex items-center gap-1 text-sm font-semibold" style={{ color: a.accent }}>
-                Open <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+              <div
+                style={{
+                  fontSize: "1.7rem",
+                  fontWeight: 750,
+                  color: "#0a0a0a",
+                  letterSpacing: "-0.04em",
+                  lineHeight: 1,
+                  marginBottom: "6px",
+                }}
+              >
+                {m.value}
               </div>
-            </Link>
+              <div style={{ fontSize: "11.5px", color: "#bbb" }}>{m.sub}</div>
+            </div>
           ))}
         </div>
 
-        {/* Recent analyses */}
-        <div>
-          <div className="flex items-center justify-between mb-5">
-            <h2 style={{ fontWeight: 700, fontSize: "1.2rem", color: "white" }}>
-              Recent Analyses
-            </h2>
-            <Link href="/resume-analyzer"
-              className="flex items-center gap-1 text-sm font-semibold"
-              style={{ color: "#7C3AED" }}>
-              <Plus className="w-4 h-4" /> New analysis
-            </Link>
-          </div>
+        {/* ── Two-column: quick actions + recent reports ── */}
+        <div
+          style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "20px", alignItems: "start" }}
+          className="main-grid"
+        >
 
-          {analyses.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 rounded-2xl text-center"
-                 style={{ border: "2px dashed #2a2a2a" }}>
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
-                   style={{ background: "#1a1a1a" }}>
-                <FileText className="w-6 h-6" style={{ color: "#555" }} />
-              </div>
-              <h3 style={{ fontWeight: 700, fontSize: "1.1rem", color: "white", marginBottom: "0.4rem" }}>
-                No analyses yet
-              </h3>
-              <p style={{ color: "#666", fontSize: "0.9rem", marginBottom: "1.2rem" }}>
-                Upload your CV to get your first ATS score
+          {/* Quick actions */}
+          <div
+            style={{
+              background: "#fff",
+              border: "1px solid #e8e8e8",
+              borderRadius: "14px",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ padding: "18px 20px", borderBottom: "1px solid #f0f0f0" }}>
+              <p style={{ fontSize: "13px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>
+                Quick actions
               </p>
-              <Link href="/resume-analyzer"
-                className="px-5 py-2.5 rounded-xl text-sm font-semibold"
-                style={{ background: "#7C3AED", color: "white" }}>
-                Analyze my CV
-              </Link>
             </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {analyses.map((a) => (
-                <div key={a.id} className="rounded-2xl p-5"
-                     style={{ background: "#141414", border: "1px solid #1e1e1e", transition: "border-color 0.2s" }}
-                     onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#7C3AED")}
-                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#1e1e1e")}
+            <div style={{ padding: "8px" }}>
+              {ACTIONS.map((a) => (
+                <Link
+                  key={a.title}
+                  href={a.href}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    padding: "11px 12px",
+                    borderRadius: "9px",
+                    textDecoration: "none",
+                    transition: "background 0.15s",
+                    marginBottom: "2px",
+                  }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "#f5f5f5")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
                 >
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <p style={{ fontWeight: 700, fontSize: "1rem", color: "white" }}>{a.job_role}</p>
-                      <p style={{ fontSize: "0.8rem", color: "#555", marginTop: "0.1rem" }}>
-                        {formatDate(a.created_at)}
-                      </p>
-                    </div>
-                    <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold"
-                          style={{
-                            background: getScoreColor(a.ats_score) + "20",
-                            color: getScoreColor(a.ats_score),
-                            border: `1px solid ${getScoreColor(a.ats_score)}40`,
-                          }}>
-                      {getScoreLabel(a.ats_score)}
-                    </span>
-                  </div>
-                  <p style={{ fontSize: "2.8rem", fontWeight: 900, color: "white", lineHeight: 1, letterSpacing: "-0.03em", marginBottom: "1rem" }}>
-                    {a.ats_score}
-                    <span style={{ fontSize: "1.2rem", fontWeight: 600, color: "#555" }}>%</span>
-                  </p>
-                  <Link href={`/reports/${a.id}`}
-                    className="flex items-center justify-center gap-2 w-full py-2 rounded-xl text-sm font-semibold transition-all"
-                    style={{ border: "1.5px solid #2a2a2a", color: "#aaa" }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.borderColor = "#7C3AED";
-                      (e.currentTarget as HTMLElement).style.color = "#7C3AED";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.borderColor = "#2a2a2a";
-                      (e.currentTarget as HTMLElement).style.color = "#aaa";
+                  <div
+                    style={{
+                      width: "32px", height: "32px",
+                      background: "#f5f5f5",
+                      border: "1px solid #eee",
+                      borderRadius: "8px",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      flexShrink: 0,
                     }}
                   >
-                    View report <ArrowRight className="w-3.5 h-3.5" />
-                  </Link>
-                </div>
+                    <a.icon size={14} style={{ color: "#555" }} />
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <p style={{ fontSize: "13px", fontWeight: 550, color: "#0a0a0a", lineHeight: 1.2 }}>
+                      {a.title}
+                    </p>
+                    <p style={{ fontSize: "11.5px", color: "#aaa", lineHeight: 1.3, marginTop: "2px" }}>
+                      {a.desc}
+                    </p>
+                  </div>
+                  <ArrowRight size={13} style={{ color: "#ccc", flexShrink: 0 }} />
+                </Link>
               ))}
             </div>
-          )}
+          </div>
+
+          {/* Recent analyses */}
+          <div
+            style={{
+              background: "#fff",
+              border: "1px solid #e8e8e8",
+              borderRadius: "14px",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                padding: "18px 20px",
+                borderBottom: "1px solid #f0f0f0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <p style={{ fontSize: "13px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>
+                Recent analyses
+              </p>
+              <Link
+                href="/resume-analyzer"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: "5px",
+                  fontSize: "12px", fontWeight: 550, color: "#555",
+                  textDecoration: "none",
+                  padding: "5px 10px",
+                  background: "#f5f5f5",
+                  border: "1px solid #eee",
+                  borderRadius: "7px",
+                  transition: "border-color 0.15s",
+                }}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.borderColor = "#ccc")}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.borderColor = "#eee")}
+              >
+                <Plus size={12} /> New analysis
+              </Link>
+            </div>
+
+            {analyses.length === 0 ? (
+              <div style={{ padding: "56px 20px", textAlign: "center" }}>
+                <div
+                  style={{
+                    width: "40px", height: "40px",
+                    background: "#f5f5f5",
+                    border: "1px solid #eee",
+                    borderRadius: "10px",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    margin: "0 auto 14px",
+                  }}
+                >
+                  <FileText size={16} style={{ color: "#bbb" }} />
+                </div>
+                <p style={{ fontSize: "13.5px", fontWeight: 600, color: "#0a0a0a", marginBottom: "6px" }}>
+                  No analyses yet
+                </p>
+                <p style={{ fontSize: "12.5px", color: "#aaa", marginBottom: "18px" }}>
+                  Upload your CV to get your first ATS score
+                </p>
+                <Link
+                  href="/resume-analyzer"
+                  style={{
+                    display: "inline-block",
+                    background: "#0a0a0a",
+                    color: "#fff",
+                    fontSize: "13px",
+                    fontWeight: 550,
+                    padding: "9px 18px",
+                    borderRadius: "8px",
+                    textDecoration: "none",
+                  }}
+                >
+                  Analyze my resume
+                </Link>
+              </div>
+            ) : (
+              <div>
+                {/* Table header */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 100px 120px 90px",
+                    padding: "10px 20px",
+                    borderBottom: "1px solid #f5f5f5",
+                    background: "#fafafa",
+                  }}
+                >
+                  {["Job role", "ATS score", "Date", "Status"].map((h) => (
+                    <span key={h} style={{ fontSize: "11px", fontWeight: 600, color: "#bbb", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                      {h}
+                    </span>
+                  ))}
+                </div>
+
+                {/* Rows */}
+                {analyses.map((a, i) => {
+                  const badge = getScoreBadge(a.ats_score);
+                  return (
+                    <Link
+                      key={a.id}
+                      href={`/reports/${a.id}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 100px 120px 90px",
+                        padding: "14px 20px",
+                        borderBottom: i < analyses.length - 1 ? "1px solid #f5f5f5" : "none",
+                        textDecoration: "none",
+                        transition: "background 0.15s",
+                        alignItems: "center",
+                      }}
+                      onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "#fafafa")}
+                      onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
+                    >
+                      {/* Role */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
+                        <div
+                          style={{
+                            width: "28px", height: "28px", flexShrink: 0,
+                            background: "#f5f5f5", border: "1px solid #eee",
+                            borderRadius: "7px",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
+                        >
+                          <FileText size={12} style={{ color: "#888" }} />
+                        </div>
+                        <span
+                          style={{
+                            fontSize: "13px", fontWeight: 550, color: "#0a0a0a",
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}
+                        >
+                          {a.job_role}
+                        </span>
+                      </div>
+
+                      {/* Score */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span style={{ fontSize: "15px", fontWeight: 700, color: "#0a0a0a", letterSpacing: "-0.02em" }}>
+                          {a.ats_score}
+                        </span>
+                        <span style={{ fontSize: "12px", color: "#bbb", fontWeight: 400 }}>%</span>
+                      </div>
+
+                      {/* Date */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                        <Clock size={11} style={{ color: "#ccc" }} />
+                        <span style={{ fontSize: "12px", color: "#aaa" }}>{formatDate(a.created_at)}</span>
+                      </div>
+
+                      {/* Badge */}
+                      <span
+                        style={{
+                          display: "inline-block",
+                          fontSize: "11px", fontWeight: 600,
+                          color: badge.color,
+                          background: badge.bg,
+                          border: `1px solid ${badge.border}`,
+                          padding: "3px 9px",
+                          borderRadius: "20px",
+                          width: "fit-content",
+                        }}
+                      >
+                        {badge.label}
+                      </span>
+                    </Link>
+                  );
+                })}
+
+                {/* Footer */}
+                <div style={{ padding: "12px 20px", borderTop: "1px solid #f5f5f5" }}>
+                  <Link
+                    href="/reports"
+                    style={{
+                      fontSize: "12.5px", fontWeight: 500, color: "#888",
+                      textDecoration: "none",
+                      display: "inline-flex", alignItems: "center", gap: "4px",
+                    }}
+                  >
+                    View all reports <ArrowRight size={12} />
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 900px) {
+          .main-grid { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 700px) {
+          .metrics-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        }
+        @media (max-width: 420px) {
+          .metrics-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }
 
 const ACTIONS = [
-  { href: "/resume-analyzer", icon: FileText, title: "Resume Analyzer", desc: "Upload your CV and get an instant ATS score",      accent: "#7C3AED" },
-  { href: "/mock-interview",  icon: Mic,      title: "Mock Interview",  desc: "Practice with an AI interviewer for your role",   accent: "#a78bfa" },
-  { href: "/reports",         icon: BarChart3, title: "Reports",        desc: "Review your past analyses and track progress",     accent: "#7C3AED" },
+  { href: "/resume-analyzer", icon: FileText,  title: "Analyze resume",      desc: "Upload CV, get ATS score"         },
+  { href: "/mock-interview",  icon: Mic,        title: "Start mock interview", desc: "Practice for your target role"   },
+  { href: "/reports",         icon: BarChart3,  title: "View reports",        desc: "Browse past analyses"             },
 ];

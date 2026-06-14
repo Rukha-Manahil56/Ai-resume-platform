@@ -2,15 +2,15 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
-  Loader2, Send, RotateCcw, Play, Mic, MicOff,
-  CheckCircle2, ChevronRight,
+  Send, RotateCcw, Play, Mic, MicOff,
+  CheckCircle2, ChevronRight, Loader2,
 } from "lucide-react";
 import { GEMINI_BUSY_MESSAGE, type AnalyzeCvErrorResponse } from "@/lib/gemini-errors";
 import type { InterviewMessage } from "@/lib/interview-types";
 import { JOB_TITLES, type JobTitle } from "@/lib/job-titles";
 import type { InterviewStage } from "@/app/api/interview/route";
 
-/* ── Stage config ── */
+/* ── Stage config — unchanged ── */
 const STAGES: { key: InterviewStage; label: string; description: string }[] = [
   { key: "introduction", label: "Introduction",  description: "Background & motivation"   },
   { key: "technical",    label: "Technical",     description: "Skills & problem solving"  },
@@ -23,7 +23,6 @@ function getStageIndex(stage: InterviewStage): number {
   return STAGES.findIndex((s) => s.key === stage);
 }
 
-/* ── API call ── */
 function createMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -32,6 +31,7 @@ type InterviewOutcome =
   | { success: true; reply: string; stage: InterviewStage }
   | { success: false; error: string };
 
+/* ── API call — unchanged ── */
 async function fetchInterviewerReply(
   jobRole: string,
   messages: InterviewMessage[],
@@ -65,50 +65,37 @@ async function fetchInterviewerReply(
     if (!data?.reply?.trim())
       return { success: false, error: "Empty reply from interviewer." };
 
-    return {
-      success: true,
-      reply: data.reply,
-      stage: data.stage ?? stage,
-    };
+    return { success: true, reply: data.reply, stage: data.stage ?? stage };
   } catch {
     return { success: false, error: GEMINI_BUSY_MESSAGE };
   }
 }
 
-/* ── Voice input hook ── */
-function useVoiceInput(
-  onTranscript: (text: string) => void,
-  disabled: boolean
-) {
+/* ── Voice input hook — unchanged ── */
+function useVoiceInput(onTranscript: (text: string) => void, disabled: boolean) {
   const [isRecording, setIsRecording] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
-    const SpeechRecognition =
-      window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    setIsSupported(Boolean(SpeechRecognition));
+    const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    setIsSupported(Boolean(SR));
   }, []);
 
   const startRecording = useCallback(() => {
     if (disabled) return;
-    const SpeechRecognition =
-      window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    const recognition = new SpeechRecognition();
+    const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.lang = "en-US";
-
     recognition.onresult = (event) => {
       const transcript = event.results[0]?.[0]?.transcript ?? "";
       if (transcript) onTranscript(transcript);
     };
-
-    recognition.onend = () => setIsRecording(false);
+    recognition.onend  = () => setIsRecording(false);
     recognition.onerror = () => setIsRecording(false);
-
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
@@ -122,26 +109,49 @@ function useVoiceInput(
   return { isRecording, isSupported, startRecording, stopRecording };
 }
 
+/* ── Parse AI message into sections ── */
+function parseAiMessage(content: string) {
+  const lines = content.split("\n");
+  const feedbackLines: string[] = [];
+  const questionLines: string[] = [];
+  const otherLines:   string[] = [];
+
+  let inFeedback = false;
+  let inQuestion = false;
+
+  for (const line of lines) {
+    if (line.startsWith("Feedback:")) { inFeedback = true;  inQuestion = false; feedbackLines.push(line); continue; }
+    if (line.startsWith("Next question:")) { inQuestion = true; inFeedback = false; questionLines.push(line); continue; }
+    if (inFeedback) { feedbackLines.push(line); continue; }
+    if (inQuestion) { questionLines.push(line); continue; }
+    otherLines.push(line);
+  }
+
+  return {
+    other:    otherLines.join("\n").trim(),
+    feedback: feedbackLines.join("\n").trim(),
+    question: questionLines.join("\n").trim(),
+  };
+}
+
 /* ── Main component ── */
 export default function MockInterviewPage() {
-  const [jobRole, setJobRole]         = useState<JobTitle>(JOB_TITLES[0]);
-  const [messages, setMessages]       = useState<InterviewMessage[]>([]);
-  const [input, setInput]             = useState("");
-  const [isLoading, setIsLoading]     = useState(false);
-  const [error, setError]             = useState<string | null>(null);
-  const [started, setStarted]         = useState(false);
+  const [jobRole, setJobRole]           = useState<JobTitle>(JOB_TITLES[0]);
+  const [messages, setMessages]         = useState<InterviewMessage[]>([]);
+  const [input, setInput]               = useState("");
+  const [isLoading, setIsLoading]       = useState(false);
+  const [error, setError]               = useState<string | null>(null);
+  const [started, setStarted]           = useState(false);
   const [currentStage, setCurrentStage] = useState<InterviewStage>("introduction");
-  const [isComplete, setIsComplete]   = useState(false);
+  const [isComplete, setIsComplete]     = useState(false);
 
   const chatEndRef  = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  /* Scroll to bottom on new messages */
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  /* Voice input */
   const handleVoiceTranscript = useCallback((text: string) => {
     setInput((prev) => prev ? `${prev} ${text}` : text);
   }, []);
@@ -149,7 +159,6 @@ export default function MockInterviewPage() {
   const { isRecording, isSupported, startRecording, stopRecording } =
     useVoiceInput(handleVoiceTranscript, !started || isLoading);
 
-  /* Start interview */
   function handleStart() {
     setStarted(true);
     setError(null);
@@ -165,7 +174,6 @@ export default function MockInterviewPage() {
     setInput("");
   }
 
-  /* Reset */
   function handleReset() {
     setStarted(false);
     setMessages([]);
@@ -176,17 +184,11 @@ export default function MockInterviewPage() {
     setIsComplete(false);
   }
 
-  /* Send message */
   async function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || isLoading || !started) return;
 
-    const userMsg: InterviewMessage = {
-      id: createMessageId(),
-      role: "user",
-      content: trimmed,
-    };
-
+    const userMsg: InterviewMessage = { id: createMessageId(), role: "user", content: trimmed };
     const history = [...messages, userMsg];
     setMessages(history);
     setInput("");
@@ -203,11 +205,7 @@ export default function MockInterviewPage() {
       return;
     }
 
-    setMessages([
-      ...history,
-      { id: createMessageId(), role: "assistant", content: outcome.reply },
-    ]);
-
+    setMessages([...history, { id: createMessageId(), role: "assistant", content: outcome.reply }]);
     setCurrentStage(outcome.stage);
     if (outcome.stage === "complete") setIsComplete(true);
     setIsLoading(false);
@@ -215,201 +213,212 @@ export default function MockInterviewPage() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleSend(); }
   }
 
-  const canSend = started && Boolean(input.trim()) && !isLoading && !isComplete;
-  const stageIndex = getStageIndex(currentStage);
+  const canSend   = started && Boolean(input.trim()) && !isLoading && !isComplete;
+  const stageIdx  = getStageIndex(currentStage);
 
   return (
-    <div className="flex min-h-screen flex-col" style={{ background: "#0f0f0f" }}>
-
-      {/* Background grid */}
-      <div className="fixed inset-0 pointer-events-none" style={{
-        backgroundImage: `
-          linear-gradient(rgba(124,58,237,0.03) 1px,transparent 1px),
-          linear-gradient(90deg,rgba(124,58,237,0.03) 1px,transparent 1px)
-        `,
-        backgroundSize: "48px 48px",
-      }} />
-
-      {/* Purple glow */}
-      <div className="fixed bottom-0 left-0 pointer-events-none" style={{
-        width: "600px", height: "400px",
-        background: "radial-gradient(circle,rgba(124,58,237,0.06) 0%,transparent 70%)",
-      }} />
-
-      <div className="relative flex flex-col flex-1 max-w-3xl mx-auto w-full px-6 py-10 sm:px-8">
-
-        {/* Header */}
-        <div className="mb-6">
-          <h1 style={{
-            fontSize: "clamp(1.8rem,4vw,2.4rem)",
-            fontWeight: 800, color: "white", letterSpacing: "-0.03em",
-          }}>
-            Mock Interview
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#f9f9f9",
+        fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "1100px",
+          margin: "0 auto",
+          width: "100%",
+          padding: "40px 24px 40px",
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+        }}
+      >
+        {/* Page header */}
+        <div style={{ marginBottom: "28px" }}>
+          <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#aaa", marginBottom: "8px" }}>
+            Practice
+          </div>
+          <h1 style={{ fontSize: "clamp(1.5rem, 3vw, 2rem)", fontWeight: 750, color: "#0a0a0a", letterSpacing: "-0.03em", lineHeight: 1.2, marginBottom: "6px" }}>
+            Mock interview
           </h1>
-          <p style={{ color: "#666", marginTop: "0.4rem", fontSize: "1rem" }}>
-            AI-powered interview practice based on real 2026 hiring trends
+          <p style={{ fontSize: "14px", color: "#888" }}>
+            Role-specific AI interviewer with real-time feedback
           </p>
         </div>
 
-        {/* Role selector */}
-        <div className="rounded-2xl p-5 mb-4"
-             style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-          <label style={{
-            fontSize: "0.85rem", fontWeight: 600,
-            color: "#aaa", display: "block", marginBottom: "0.5rem",
-          }}>
-            Interview role
-          </label>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <select
-              value={jobRole}
-              onChange={(e) => setJobRole(e.target.value as JobTitle)}
-              disabled={isLoading || started}
-              className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none disabled:opacity-50"
-              style={{ background: "#0f0f0f", border: "1px solid #2a2a2a", color: "white" }}
-            >
-              {JOB_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-
-            {!started ? (
-              <button
-                onClick={handleStart}
-                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90 active:scale-95"
-                style={{ background: "#7C3AED", color: "white", whiteSpace: "nowrap" }}
-              >
-                <Play className="w-4 h-4" /> Start Interview
-              </button>
-            ) : (
-              <button
-                onClick={handleReset}
-                disabled={isLoading}
-                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all hover:opacity-90 disabled:opacity-40"
-                style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#aaa", whiteSpace: "nowrap" }}
-              >
-                <RotateCcw className="w-4 h-4" /> New Interview
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Stage progress bar — only show when started */}
-        {started && (
-          <div className="rounded-2xl p-4 mb-4"
-               style={{ background: "#141414", border: "1px solid #1e1e1e" }}>
-            <div className="flex items-center justify-between mb-3">
-              <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#aaa" }}>
-                Interview Progress
-              </span>
-              <span style={{ fontSize: "0.8rem", color: "#7C3AED", fontWeight: 600 }}>
-                {isComplete ? "Complete!" : STAGES[stageIndex]?.label ?? ""}
-              </span>
-            </div>
-
-            {/* Stage steps */}
-            <div className="flex items-center gap-1">
-              {STAGES.map((stage, i) => {
-                const done    = i < stageIndex;
-                const active  = i === stageIndex && !isComplete;
-                const pending = i > stageIndex && !isComplete;
-
-                return (
-                  <div key={stage.key} className="flex items-center flex-1">
-                    <div className="flex flex-col items-center flex-1">
-                      <div
-                        className="w-full h-1.5 rounded-full mb-1.5"
-                        style={{
-                          background: done || isComplete
-                            ? "#7C3AED"
-                            : active
-                            ? "#7C3AED80"
-                            : "#2a2a2a",
-                        }}
-                      />
-                      <span style={{
-                        fontSize: "0.65rem",
-                        color: done || active || isComplete ? "#7C3AED" : "#444",
-                        fontWeight: active ? 700 : 400,
-                        textAlign: "center",
-                        whiteSpace: "nowrap",
-                      }}>
-                        {done || isComplete
-                          ? <CheckCircle2
-                              className="w-3 h-3 inline"
-                              style={{ color: "#7C3AED" }}
-                            />
-                          : stage.label}
-                      </span>
-                    </div>
-                    {i < STAGES.length - 1 && (
-                      <ChevronRight
-                        className="w-3 h-3 shrink-0 mx-0.5"
-                        style={{ color: "#2a2a2a" }}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Current stage description */}
-            {!isComplete && (
-              <p style={{ fontSize: "0.75rem", color: "#555", marginTop: "0.5rem" }}>
-                {STAGES[stageIndex]?.description}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Chat box */}
+        {/* Main two-column layout */}
         <div
-          className="flex flex-col flex-1 rounded-2xl overflow-hidden"
-          style={{ background: "#141414", border: "1px solid #1e1e1e", minHeight: "460px" }}
+          style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: "20px", flex: 1, alignItems: "start" }}
+          className="interview-grid"
         >
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-4" aria-live="polite">
 
-            {/* Empty state */}
-            {!started && (
-              <div className="flex flex-col items-center justify-center h-full py-16 text-center gap-4">
-                <div
-                  className="w-14 h-14 rounded-2xl flex items-center justify-center"
-                  style={{ background: "#7C3AED20", border: "1px solid #7C3AED30" }}
-                >
-                  <Play className="w-6 h-6" style={{ color: "#7C3AED" }} />
-                </div>
+          {/* ── LEFT PANEL ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+
+            {/* Role selector */}
+            <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", overflow: "hidden" }}>
+              <div style={{ padding: "16px 18px", borderBottom: "1px solid #f0f0f0" }}>
+                <p style={{ fontSize: "12.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>
+                  Interview setup
+                </p>
+              </div>
+              <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: "12px" }}>
                 <div>
-                  <p style={{ color: "white", fontWeight: 600, marginBottom: "0.3rem" }}>
-                    Ready to practice?
-                  </p>
-                  <p style={{ color: "#555", fontSize: "0.85rem" }}>
-                    Select a role and click Start Interview
+                  <label style={{ fontSize: "11.5px", fontWeight: 600, color: "#aaa", display: "block", marginBottom: "6px" }}>
+                    Job role
+                  </label>
+                  <select
+                    value={jobRole}
+                    onChange={(e) => setJobRole(e.target.value as JobTitle)}
+                    disabled={isLoading || started}
+                    style={{
+                      width: "100%",
+                      background: "#fafafa",
+                      border: "1px solid #e4e4e4",
+                      borderRadius: "8px",
+                      padding: "8px 12px",
+                      fontSize: "13px",
+                      color: "#0a0a0a",
+                      outline: "none",
+                      fontFamily: "inherit",
+                      cursor: started ? "not-allowed" : "pointer",
+                      opacity: started ? 0.5 : 1,
+                    }}
+                  >
+                    {JOB_TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+
+                {!started ? (
+                  <button
+                    onClick={handleStart}
+                    style={{
+                      width: "100%",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: "7px",
+                      background: "#0a0a0a", color: "#fff",
+                      border: "none", borderRadius: "9px",
+                      padding: "10px", fontSize: "13.5px", fontWeight: 600,
+                      cursor: "pointer", fontFamily: "inherit",
+                      transition: "opacity 0.15s",
+                    }}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = "0.85")}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = "1")}
+                  >
+                    <Play size={14} /> Start interview
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleReset}
+                    disabled={isLoading}
+                    style={{
+                      width: "100%",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: "7px",
+                      background: "#fff", color: "#555",
+                      border: "1px solid #e4e4e4", borderRadius: "9px",
+                      padding: "10px", fontSize: "13px", fontWeight: 550,
+                      cursor: isLoading ? "not-allowed" : "pointer", fontFamily: "inherit",
+                      opacity: isLoading ? 0.5 : 1,
+                      transition: "border-color 0.15s",
+                    }}
+                    onMouseEnter={(e) => { if (!isLoading) (e.currentTarget as HTMLElement).style.borderColor = "#aaa"; }}
+                    onMouseLeave={(e) => { if (!isLoading) (e.currentTarget as HTMLElement).style.borderColor = "#e4e4e4"; }}
+                  >
+                    <RotateCcw size={13} /> New interview
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Stage progress — only when started */}
+            {started && (
+              <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", overflow: "hidden" }}>
+                <div style={{ padding: "16px 18px", borderBottom: "1px solid #f0f0f0" }}>
+                  <p style={{ fontSize: "12.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em" }}>
+                    Interview stages
                   </p>
                 </div>
-                <div className="grid grid-cols-1 gap-2 mt-2 w-full max-w-xs">
-                  {STAGES.map((s) => (
-                    <div key={s.key}
-                      className="flex items-center gap-3 rounded-xl px-3 py-2"
-                      style={{ background: "#0f0f0f", border: "1px solid #2a2a2a" }}
-                    >
+                <div style={{ padding: "10px 8px" }}>
+                  {STAGES.map((stage, i) => {
+                    const done   = isComplete || i < stageIdx;
+                    const active = !isComplete && i === stageIdx;
+                    return (
                       <div
-                        className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0"
-                        style={{ background: "#7C3AED20" }}
+                        key={stage.key}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          padding: "9px 10px",
+                          borderRadius: "8px",
+                          background: active ? "#f5f5f5" : "transparent",
+                          marginBottom: "2px",
+                        }}
                       >
-                        <span style={{ fontSize: "0.65rem", color: "#7C3AED", fontWeight: 700 }}>
-                          {STAGES.indexOf(s) + 1}
-                        </span>
+                        {/* Step indicator */}
+                        <div
+                          style={{
+                            width: "22px", height: "22px", flexShrink: 0,
+                            borderRadius: "50%",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: done ? "#0a0a0a" : active ? "#0a0a0a" : "#f0f0f0",
+                            border: done || active ? "none" : "1px solid #e0e0e0",
+                          }}
+                        >
+                          {done ? (
+                            <CheckCircle2 size={12} style={{ color: "#fff" }} />
+                          ) : (
+                            <span style={{ fontSize: "10px", fontWeight: 700, color: active ? "#fff" : "#bbb" }}>
+                              {i + 1}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <p style={{ fontSize: "12.5px", fontWeight: active ? 650 : 450, color: active || done ? "#0a0a0a" : "#aaa", lineHeight: 1.2 }}>
+                            {stage.label}
+                          </p>
+                          <p style={{ fontSize: "11px", color: "#bbb", lineHeight: 1.3, marginTop: "1px" }}>
+                            {stage.description}
+                          </p>
+                        </div>
+                        {active && <ChevronRight size={13} style={{ color: "#ccc", marginLeft: "auto", flexShrink: 0 }} />}
                       </div>
-                      <div className="text-left">
-                        <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "white" }}>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Tips — only before start */}
+            {!started && (
+              <div style={{ background: "#fff", border: "1px solid #e8e8e8", borderRadius: "14px", padding: "16px 18px" }}>
+                <p style={{ fontSize: "12.5px", fontWeight: 650, color: "#0a0a0a", letterSpacing: "-0.01em", marginBottom: "12px" }}>
+                  Interview stages
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {STAGES.map((s, i) => (
+                    <div key={s.key} style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                      <div
+                        style={{
+                          width: "20px", height: "20px", flexShrink: 0,
+                          background: "#f0f0f0",
+                          borderRadius: "50%",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}
+                      >
+                        <span style={{ fontSize: "9px", fontWeight: 700, color: "#aaa" }}>{i + 1}</span>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: "12px", fontWeight: 550, color: "#555", lineHeight: 1.3 }}>
                           {s.label}
                         </p>
-                        <p style={{ fontSize: "0.7rem", color: "#555" }}>
+                        <p style={{ fontSize: "11px", color: "#bbb", lineHeight: 1.4 }}>
                           {s.description}
                         </p>
                       </div>
@@ -418,199 +427,389 @@ export default function MockInterviewPage() {
                 </div>
               </div>
             )}
-
-            {/* Messages */}
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className="max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap"
-                  style={
-                    msg.role === "user"
-                      ? { background: "#7C3AED", color: "white", borderBottomRightRadius: "4px" }
-                      : { background: "#1e1e1e", color: "#ddd", borderBottomLeftRadius: "4px", border: "1px solid #2a2a2a" }
-                  }
-                >
-                  {/* Highlight feedback sections in AI messages */}
-                  {msg.role === "assistant"
-                    ? msg.content.split("\n").map((line, i) => {
-                        const isFeedback = line.startsWith("Feedback:");
-                        const isNextQ    = line.startsWith("Next question:");
-                        return (
-                          <p key={i} style={{
-                            marginBottom: "0.3rem",
-                            color: isFeedback
-                              ? "#a78bfa"
-                              : isNextQ
-                              ? "#e2e8f0"
-                              : "#ddd",
-                            fontWeight: isFeedback || isNextQ ? 600 : 400,
-                          }}>
-                            {line}
-                          </p>
-                        );
-                      })
-                    : msg.content
-                  }
-                </div>
-              </div>
-            ))}
-
-            {/* Typing indicator */}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div
-                  className="flex items-center gap-2 rounded-2xl px-4 py-3 text-sm"
-                  style={{
-                    background: "#1e1e1e",
-                    border: "1px solid #2a2a2a",
-                    color: "#666",
-                    borderBottomLeftRadius: "4px",
-                  }}
-                >
-                  <Loader2 className="w-4 h-4 animate-spin" style={{ color: "#7C3AED" }} />
-                  Interviewer is thinking…
-                </div>
-              </div>
-            )}
-
-            {/* Interview complete banner */}
-            {isComplete && (
-              <div
-                className="rounded-2xl p-5 text-center"
-                style={{ background: "#7C3AED15", border: "1px solid #7C3AED40" }}
-              >
-                <CheckCircle2
-                  className="w-8 h-8 mx-auto mb-2"
-                  style={{ color: "#7C3AED" }}
-                />
-                <p style={{ color: "white", fontWeight: 700, fontSize: "1rem", marginBottom: "0.3rem" }}>
-                  Interview Complete!
-                </p>
-                <p style={{ color: "#aaa", fontSize: "0.85rem", marginBottom: "1rem" }}>
-                  Great job completing all 5 stages. Click New Interview to practice again.
-                </p>
-                <button
-                  onClick={handleReset}
-                  className="px-5 py-2 rounded-xl text-sm font-semibold"
-                  style={{ background: "#7C3AED", color: "white" }}
-                >
-                  Start New Interview
-                </button>
-              </div>
-            )}
-
-            <div ref={chatEndRef} />
           </div>
 
-          {/* Error */}
-          {error && (
+          {/* ── CHAT AREA ── */}
+          <div
+            style={{
+              background: "#fff",
+              border: "1px solid #e8e8e8",
+              borderRadius: "14px",
+              display: "flex",
+              flexDirection: "column",
+              minHeight: "600px",
+              overflow: "hidden",
+            }}
+          >
+            {/* Chat header */}
             <div
-              className="mx-4 mb-2 rounded-xl px-4 py-3 text-sm"
               style={{
-                background: "#1a1500",
-                border: "1px solid #3a2e00",
-                color: "#fbbf24",
+                padding: "16px 20px",
+                borderBottom: "1px solid #f0f0f0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                background: "#fafafa",
               }}
-              role="alert"
             >
-              {error}
-            </div>
-          )}
-
-          {/* Input area */}
-          {!isComplete && (
-            <div className="p-4" style={{ borderTop: "1px solid #1e1e1e" }}>
-
-              {/* Voice recording indicator */}
-              {isRecording && (
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <div
-                  className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg"
-                  style={{ background: "#7C3AED20", border: "1px solid #7C3AED40" }}
+                  style={{
+                    width: "28px", height: "28px",
+                    background: started ? "#0a0a0a" : "#f0f0f0",
+                    borderRadius: "50%",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
                 >
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: started ? "#fff" : "#aaa" }}>AI</span>
+                </div>
+                <div>
+                  <p style={{ fontSize: "13px", fontWeight: 600, color: "#0a0a0a", lineHeight: 1.2 }}>
+                    AI Interviewer
+                  </p>
+                  <p style={{ fontSize: "11px", color: "#aaa", lineHeight: 1.2 }}>
+                    {started
+                      ? isComplete
+                        ? "Interview complete"
+                        : isLoading
+                        ? "Typing..."
+                        : `${STAGES[stageIdx]?.label ?? ""} stage`
+                      : "Ready to begin"}
+                  </p>
+                </div>
+              </div>
+              {started && !isComplete && (
+                <div
+                  style={{
+                    display: "flex", alignItems: "center", gap: "5px",
+                    fontSize: "11px", color: "#2d7a4f",
+                    background: "#f0faf4", border: "1px solid #c8ecd8",
+                    padding: "3px 10px", borderRadius: "20px",
+                  }}
+                >
+                  <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#2d7a4f" }} />
+                  In progress
+                </div>
+              )}
+            </div>
+
+            {/* Messages */}
+            <div
+              style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: "14px" }}
+              aria-live="polite"
+            >
+
+              {/* Empty / not started */}
+              {!started && (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", padding: "40px 20px" }}>
                   <div
-                    className="w-2 h-2 rounded-full animate-pulse"
-                    style={{ background: "#ef4444" }}
-                  />
-                  <span style={{ fontSize: "0.8rem", color: "#a78bfa" }}>
-                    Recording… speak now, click mic to stop
-                  </span>
+                    style={{
+                      width: "44px", height: "44px",
+                      background: "#f5f5f5", border: "1px solid #eee",
+                      borderRadius: "12px",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      marginBottom: "14px",
+                    }}
+                  >
+                    <Play size={18} style={{ color: "#888" }} />
+                  </div>
+                  <p style={{ fontSize: "14px", fontWeight: 600, color: "#0a0a0a", marginBottom: "6px" }}>
+                    Ready when you are
+                  </p>
+                  <p style={{ fontSize: "13px", color: "#aaa", lineHeight: 1.6 }}>
+                    Select a job role and click{" "}
+                    <span style={{ fontWeight: 550, color: "#555" }}>Start interview</span>{" "}
+                    to begin your practice session.
+                  </p>
                 </div>
               )}
 
-              <div className="flex gap-2 items-end">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    started
-                      ? isRecording
-                        ? "Listening…"
-                        : "Type your answer or use the mic… (Enter to send)"
-                      : "Start the interview to reply"
-                  }
-                  disabled={!started || isLoading}
-                  rows={2}
-                  className="flex-1 rounded-xl px-4 py-3 text-sm leading-relaxed resize-none outline-none disabled:opacity-40"
-                  style={{
-                    background: "#0f0f0f",
-                    border: "1px solid #2a2a2a",
-                    color: "white",
-                    fontFamily: "inherit",
-                    minHeight: "52px",
-                  }}
-                  onFocus={(e) => (e.target.style.borderColor = "#7C3AED")}
-                  onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
-                />
+              {/* Messages */}
+              {messages.map((msg) => {
+                if (msg.role === "user") {
+                  return (
+                    <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <div
+                        style={{
+                          maxWidth: "75%",
+                          background: "#0a0a0a",
+                          color: "#fff",
+                          borderRadius: "14px",
+                          borderBottomRightRadius: "4px",
+                          padding: "12px 16px",
+                          fontSize: "13.5px",
+                          lineHeight: 1.65,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {msg.content}
+                      </div>
+                    </div>
+                  );
+                }
 
-                {/* Voice button — only show if browser supports it */}
-                {isSupported && (
-                  <button
-                    type="button"
-                    onClick={isRecording ? stopRecording : startRecording}
-                    disabled={!started || isLoading}
-                    title={isRecording ? "Stop recording" : "Record voice answer"}
-                    className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-all disabled:opacity-30 active:scale-95"
+                /* AI message — parsed into sections */
+                const parsed = parseAiMessage(msg.content);
+                return (
+                  <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start" }}>
+                    <div style={{ maxWidth: "80%", display: "flex", flexDirection: "column", gap: "8px" }}>
+
+                      {/* General / intro text */}
+                      {parsed.other && (
+                        <div
+                          style={{
+                            background: "#fafafa",
+                            border: "1px solid #f0f0f0",
+                            borderRadius: "14px",
+                            borderBottomLeftRadius: "4px",
+                            padding: "12px 16px",
+                            fontSize: "13.5px",
+                            color: "#333",
+                            lineHeight: 1.65,
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {parsed.other}
+                        </div>
+                      )}
+
+                      {/* Feedback block */}
+                      {parsed.feedback && (
+                        <div
+                          style={{
+                            background: "#fafafa",
+                            border: "1px solid #e8e8e8",
+                            borderRadius: "10px",
+                            padding: "12px 14px",
+                          }}
+                        >
+                          <p style={{ fontSize: "10.5px", fontWeight: 700, color: "#bbb", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "6px" }}>
+                            Feedback
+                          </p>
+                          <p style={{ fontSize: "13px", color: "#555", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+                            {parsed.feedback.replace(/^Feedback:\s*/i, "")}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Next question block */}
+                      {parsed.question && (
+                        <div
+                          style={{
+                            background: "#fff",
+                            border: "1px solid #e0e0e0",
+                            borderRadius: "10px",
+                            padding: "12px 14px",
+                            borderLeft: "3px solid #0a0a0a",
+                          }}
+                        >
+                          <p style={{ fontSize: "10.5px", fontWeight: 700, color: "#bbb", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "6px" }}>
+                            Next question
+                          </p>
+                          <p style={{ fontSize: "13.5px", fontWeight: 550, color: "#0a0a0a", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+                            {parsed.question.replace(/^Next question:\s*/i, "")}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Typing indicator */}
+              {isLoading && (
+                <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                  <div
                     style={{
-                      background: isRecording ? "#ef444420" : "#1e1e1e",
-                      border: `1px solid ${isRecording ? "#ef4444" : "#2a2a2a"}`,
-                      color: isRecording ? "#ef4444" : "#666",
+                      background: "#fafafa",
+                      border: "1px solid #f0f0f0",
+                      borderRadius: "14px",
+                      borderBottomLeftRadius: "4px",
+                      padding: "12px 16px",
+                      display: "flex", alignItems: "center", gap: "8px",
                     }}
                   >
-                    {isRecording
-                      ? <MicOff className="w-4 h-4" />
-                      : <Mic className="w-4 h-4" />}
+                    <Loader2 size={13} style={{ color: "#aaa", animation: "spin 0.8s linear infinite" }} />
+                    <span style={{ fontSize: "13px", color: "#aaa" }}>Interviewer is responding…</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Complete banner */}
+              {isComplete && (
+                <div
+                  style={{
+                    background: "#fafafa",
+                    border: "1px solid #e8e8e8",
+                    borderRadius: "12px",
+                    padding: "24px",
+                    textAlign: "center",
+                  }}
+                >
+                  <CheckCircle2 size={28} style={{ color: "#2d7a4f", margin: "0 auto 10px" }} />
+                  <p style={{ fontSize: "15px", fontWeight: 700, color: "#0a0a0a", marginBottom: "6px" }}>
+                    Interview complete
+                  </p>
+                  <p style={{ fontSize: "13px", color: "#888", marginBottom: "18px", lineHeight: 1.6 }}>
+                    You've completed all five stages. Click below to practice again with a fresh session.
+                  </p>
+                  <button
+                    onClick={handleReset}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: "6px",
+                      background: "#0a0a0a", color: "#fff",
+                      border: "none", borderRadius: "8px",
+                      padding: "9px 18px", fontSize: "13px", fontWeight: 600,
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    <RotateCcw size={13} /> Start new interview
                   </button>
+                </div>
+              )}
+
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div
+                style={{
+                  margin: "0 16px 8px",
+                  padding: "10px 14px",
+                  background: "#fffbeb",
+                  border: "1px solid #fde68a",
+                  borderRadius: "8px",
+                  fontSize: "12.5px",
+                  color: "#92400e",
+                }}
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+
+            {/* Input area */}
+            {!isComplete && (
+              <div style={{ padding: "14px 16px", borderTop: "1px solid #f0f0f0" }}>
+
+                {/* Recording indicator */}
+                {isRecording && (
+                  <div
+                    style={{
+                      display: "flex", alignItems: "center", gap: "7px",
+                      marginBottom: "8px",
+                      padding: "6px 12px",
+                      background: "#fef2f2",
+                      border: "1px solid #fecaca",
+                      borderRadius: "7px",
+                    }}
+                  >
+                    <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#dc2626", animation: "pulse 1s infinite" }} />
+                    <span style={{ fontSize: "12px", color: "#991b1b", fontWeight: 500 }}>
+                      Listening — speak now, click mic to stop
+                    </span>
+                  </div>
                 )}
 
-                {/* Send button */}
-                <button
-                  onClick={() => void handleSend()}
-                  disabled={!canSend}
-                  className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-all disabled:opacity-30 active:scale-95"
-                  style={{ background: "#7C3AED", color: "white" }}
-                  aria-label="Send message"
-                >
-                  {isLoading
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <Send className="w-4 h-4" />}
-                </button>
-              </div>
+                <div style={{ display: "flex", gap: "8px", alignItems: "flex-end" }}>
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      !started
+                        ? "Start the interview to type here…"
+                        : isRecording
+                        ? "Listening…"
+                        : "Type your answer… (Enter to send, Shift+Enter for new line)"
+                    }
+                    disabled={!started || isLoading}
+                    rows={2}
+                    style={{
+                      flex: 1,
+                      background: "#fafafa",
+                      border: "1px solid #e4e4e4",
+                      borderRadius: "10px",
+                      padding: "10px 14px",
+                      fontSize: "13.5px",
+                      color: "#0a0a0a",
+                      lineHeight: 1.6,
+                      outline: "none",
+                      resize: "none",
+                      fontFamily: "inherit",
+                      transition: "border-color 0.15s",
+                      minHeight: "46px",
+                      opacity: !started || isLoading ? 0.5 : 1,
+                    }}
+                    onFocus={(e) => ((e.target as HTMLElement).style.borderColor = "#0a0a0a")}
+                    onBlur={(e)  => ((e.target as HTMLElement).style.borderColor = "#e4e4e4")}
+                  />
 
-              {/* Voice not supported notice */}
-              {!isSupported && started && (
-                <p style={{ fontSize: "0.72rem", color: "#444", marginTop: "0.4rem" }}>
-                  Voice input not supported in this browser. Use Chrome or Edge for voice.
-                </p>
-              )}
-            </div>
-          )}
+                  {/* Mic button */}
+                  {isSupported && (
+                    <button
+                      type="button"
+                      onClick={isRecording ? stopRecording : startRecording}
+                      disabled={!started || isLoading}
+                      title={isRecording ? "Stop recording" : "Record voice answer"}
+                      style={{
+                        width: "40px", height: "40px", flexShrink: 0,
+                        background: isRecording ? "#fef2f2" : "#f5f5f5",
+                        border: `1px solid ${isRecording ? "#fecaca" : "#e4e4e4"}`,
+                        borderRadius: "9px",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        cursor: !started || isLoading ? "not-allowed" : "pointer",
+                        opacity: !started || isLoading ? 0.4 : 1,
+                        transition: "all 0.15s",
+                        color: isRecording ? "#dc2626" : "#888",
+                      }}
+                    >
+                      {isRecording ? <MicOff size={15} /> : <Mic size={15} />}
+                    </button>
+                  )}
+
+                  {/* Send button */}
+                  <button
+                    onClick={() => void handleSend()}
+                    disabled={!canSend}
+                    style={{
+                      width: "40px", height: "40px", flexShrink: 0,
+                      background: canSend ? "#0a0a0a" : "#f0f0f0",
+                      border: "none",
+                      borderRadius: "9px",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: canSend ? "pointer" : "not-allowed",
+                      transition: "opacity 0.15s",
+                      color: canSend ? "#fff" : "#ccc",
+                    }}
+                    aria-label="Send message"
+                  >
+                    {isLoading
+                      ? <Loader2 size={15} style={{ animation: "spin 0.8s linear infinite" }} />
+                      : <Send size={15} />}
+                  </button>
+                </div>
+
+                {!isSupported && started && (
+                  <p style={{ fontSize: "11.5px", color: "#bbb", marginTop: "6px" }}>
+                    Voice input requires Chrome or Edge.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes spin  { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        @media (max-width: 768px) {
+          .interview-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }
