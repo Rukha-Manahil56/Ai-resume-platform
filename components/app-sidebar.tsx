@@ -73,6 +73,64 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
         })}
       </nav>
 
+      {/* Built-by credit */}
+      <div
+        className="px-4 py-3"
+        style={{ borderTop: "1px solid #1a1a1a" }}
+      >
+        <a
+          href="https://www.linkedin.com/in/rukha-manahil-798572340"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 group w-full rounded-lg px-2 py-2 transition-all duration-150"
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "#141414";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "transparent";
+          }}
+        >
+          {/* Avatar */}
+          <div
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold"
+            style={{ background: "#1e1e1e", color: "#10B981", border: "1px solid #2a2a2a" }}
+          >
+            R
+          </div>
+
+          <div className="flex flex-col leading-tight">
+            <span style={{ fontSize: "0.7rem", color: "#444", fontWeight: 500 }}>
+              Built by
+            </span>
+            <span
+              style={{
+                fontSize: "0.75rem",
+                color: "#888",
+                fontWeight: 600,
+                transition: "color 0.15s ease",
+              }}
+              className="group-hover:!text-white"
+            >
+              Rukha Manahil
+            </span>
+          </div>
+
+          {/* Green pulse dot */}
+          <div className="ml-auto flex items-center">
+            <span
+              style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "#10B981",
+                display: "block",
+                boxShadow: "0 0 0 2px #10B98122",
+              }}
+            />
+          </div>
+        </a>
+      </div>
+
       <div style={{ borderTop: "1px solid #1a1a1a" }} />
       <div className="p-3"><AuthButton /></div>
     </aside>
