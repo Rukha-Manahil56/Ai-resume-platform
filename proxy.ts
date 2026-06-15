@@ -1,7 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED = ["/dashboard", "/resume-analyzer", "/mock-interview", "/reports"];
+const PROTECTED = [
+  "/dashboard",
+  "/resume-analyzer",
+  "/mock-interview",
+  "/reports",
+  "/settings",
+];
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -31,7 +37,7 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isProtected = PROTECTED.some((p) => pathname.startsWith(p));
 
-  /* Logged-out user hits a protected route → send to login */
+  /* Logged-out user hits a protected route → send to login, preserve destination */
   if (isProtected && !user) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
@@ -39,15 +45,26 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  /* Logged-in user hits login page or landing page → send to dashboard */
-  if (pathname === "/login"  && user) {
+  /* Logged-in user hits /login → send to redirect param, or /dashboard */
+  if (pathname === "/login" && user) {
+    const redirectTo = request.nextUrl.searchParams.get("redirect");
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    // Only allow relative paths to prevent open redirect
+    const isSafe =
+      redirectTo &&
+      redirectTo.startsWith("/") &&
+      !redirectTo.startsWith("//") &&
+      !UNSAFE_PATHS.includes(redirectTo);
+    url.pathname = isSafe ? redirectTo : "/dashboard";
+    url.search = "";
     return NextResponse.redirect(url);
   }
 
   return supabaseResponse;
 }
+
+/** Paths that should never be a redirect destination */
+const UNSAFE_PATHS = ["/login", "/auth/callback"];
 
 export const config = {
   matcher: [

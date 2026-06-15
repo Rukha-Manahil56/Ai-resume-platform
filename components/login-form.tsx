@@ -65,24 +65,35 @@ export function LoginForm() {
     setStep(target);
   }
 
-  /* Always land on /dashboard after any successful auth */
-  function goToDashboard() {
-    const destination =
-      !redirectTo || redirectTo === "/" || redirectTo === "/login"
-        ? "/dashboard"
-        : redirectTo;
-    window.location.href = destination;
+  /** Resolve the post-auth destination, never sending back to login or root */
+  function resolveDestination(): string {
+    if (
+      !redirectTo ||
+      redirectTo === "/" ||
+      redirectTo === "/login" ||
+      redirectTo.startsWith("//")
+    ) {
+      return "/dashboard";
+    }
+    return redirectTo;
+  }
+
+  function goToDestination() {
+    window.location.href = resolveDestination();
   }
 
   /* ── Google OAuth ── */
   async function handleGoogle() {
     setLoading(true);
     setError(null);
+
+    const destination = resolveDestination();
+
     const { error: e } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        /* Always redirect to /dashboard after Google login */
-        redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+        // Pass the intended destination through the OAuth callback
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(destination)}`,
       },
     });
     if (e) { setError(e.message); setLoading(false); }
@@ -118,7 +129,7 @@ export function LoginForm() {
       setSuccess("Account created! Please sign in.");
       setStep("login");
     } else {
-      goToDashboard();
+      goToDestination();
     }
 
     setLoading(false);
@@ -138,7 +149,7 @@ export function LoginForm() {
       return;
     }
 
-    goToDashboard();
+    goToDestination();
   }
 
   /* ── Forgot password — send OTP ── */
@@ -242,7 +253,7 @@ export function LoginForm() {
           <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center">
             <span className="text-black font-black text-sm">AI</span>
           </div>
-          <span className="text-white font-bold text-lg tracking-tight">ResumeIQ</span>
+          <span className="text-white font-bold text-lg tracking-tight">CareerLens</span>
         </div>
 
         <div className="space-y-8">
@@ -272,7 +283,7 @@ export function LoginForm() {
         </div>
 
         <p style={{ color: "oklch(0.35 0 0)", fontSize: "0.8rem" }}>
-          © 2025 ResumeIQ. All rights reserved.
+          © 2026 CareerLens. All rights reserved.
         </p>
       </div>
 
@@ -284,7 +295,7 @@ export function LoginForm() {
           <div className="w-8 h-8 rounded-lg bg-black flex items-center justify-center">
             <span className="text-white font-black text-sm">AI</span>
           </div>
-          <span className="font-bold text-lg tracking-tight text-black">ResumeIQ</span>
+          <span className="font-bold text-lg tracking-tight text-black">CareerLens</span>
         </div>
 
         <div className="w-full max-w-sm" style={{ animation: "fadeUp 0.4s ease-out both" }}>
@@ -460,7 +471,7 @@ export function LoginForm() {
               <GoogleButton loading={isLoading} onClick={handleGoogle} />
 
               <p className="text-center" style={{ fontSize: "0.85rem", color: "oklch(0.5 0 0)" }}>
-                Don't have an account?{" "}
+                Don&apos;t have an account?{" "}
                 <button type="button" onClick={() => reset("signup")}
                   className="font-semibold underline" style={{ color: "#0a0a0a" }}>
                   Sign up
@@ -622,7 +633,7 @@ export function LoginForm() {
                 <h2 style={headingStyle}>Password updated</h2>
                 <p style={subStyle}>Your password has been changed successfully.</p>
               </div>
-              <BlackButton onClick={goToDashboard}>Go to dashboard</BlackButton>
+              <BlackButton onClick={goToDestination}>Go to dashboard</BlackButton>
             </div>
           )}
 
