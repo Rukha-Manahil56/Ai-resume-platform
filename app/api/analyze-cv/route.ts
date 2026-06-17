@@ -82,13 +82,66 @@ function isRetryable(error: unknown): boolean {
   );
 }
 
+/*
+ * Task 6 — buildPrompt
+ *
+ * The prompt now explicitly instructs the AI to generate interview questions
+ * that are PERSONALIZED to this specific candidate. Questions must be derived
+ * from a combination of:
+ *   • The candidate's actual CV content (skills, projects, experience, education)
+ *   • The selected job role (domain-specific focus)
+ *   • The job description (employer's exact requirements and keywords)
+ *   • Missing skills identified during analysis (probe on gaps)
+ *   • Experience level inferred from the CV
+ *
+ * Generic, hardcoded, or role-agnostic questions are explicitly forbidden.
+ */
 function buildPrompt(cvText: string, jobRole: string, jobDescription: string): string {
-  return `You are an advanced Applicant Tracking System (ATS) engine.
+  return `You are an advanced Applicant Tracking System (ATS) engine and senior hiring expert.
 
 Analyze how well the candidate's CV matches the target role and job description.
-Be specific, practical, and honest. Base missing skills on the job description.
+Be specific, practical, and honest. Base missing skills strictly on the job description.
 For improvements, quote realistic "before" snippets from the CV and show stronger "after" versions.
-For interview questions, tailor them to the role and the candidate's background.
+
+──────────────────────────────────────────
+INTERVIEW QUESTIONS — CRITICAL INSTRUCTIONS
+──────────────────────────────────────────
+Generate exactly 8 interview questions that are COMPLETELY PERSONALIZED to THIS candidate.
+
+You MUST:
+1. Read the candidate's CV carefully — note their actual skills, tools, projects, job titles,
+   years of experience, education, and any achievements they mention.
+2. Read the job description carefully — note the employer's required skills, responsibilities,
+   and keywords.
+3. Generate questions that directly reference or probe what you found in the CV and job
+   description. For example:
+     - If the CV mentions "React" and the job requires "Next.js", ask about their transition
+       or experience with SSR/SSG.
+     - If the CV lists a specific project, ask a question about a challenge from that project.
+     - If the CV shows 2 years of experience but the job asks for 5, ask how they plan to
+       close that gap.
+     - If a skill appears in the job description but is absent from the CV, ask how the
+       candidate would approach learning it.
+4. Cover a mix of question types across the 8 questions:
+     - At least 2 TECHNICAL questions specific to the ${jobRole} role and the candidate's
+       tech stack or domain.
+     - At least 2 BEHAVIORAL questions (STAR format) that reference the candidate's actual
+       background.
+     - At least 1 SITUATIONAL question based on a realistic scenario for this exact role.
+     - At least 1 question probing a KEY MISSING SKILL or gap identified in the analysis.
+     - Remaining questions tailored to the candidate's career level and the role's seniority.
+5. Write a strong, specific modelAnswer for each question — the answer should reference the
+   candidate's own background where possible, and show what an excellent answer looks like.
+
+You MUST NOT:
+- Generate generic questions like "Tell me about yourself" or "Where do you see yourself
+  in 5 years" unless they are deeply customized to this candidate's specific situation.
+- Copy the same questions across different candidates or roles.
+- Produce questions that could apply to any candidate regardless of their CV.
+- Hardcode questions for specific job titles. The role is a GUIDE for domain focus only —
+  the questions must come from the CV content and job description.
+
+──────────────────────────────────────────
 
 Return ONLY valid JSON matching the required schema.
 
@@ -122,15 +175,11 @@ function parseResult(raw: string): CvAnalysisResult {
   return parsed;
 }
 
-/**
- * Generate a short cache key from CV text + job role + job description.
- * Same inputs = same key = instant cached result.
- */
 function makeCacheKey(cvText: string, jobRole: string, jobDescription: string): string {
   return createHash("sha256")
     .update(`${cvText}||${jobRole}||${jobDescription}`)
     .digest("hex")
-    .slice(0, 32); // 32 chars is enough
+    .slice(0, 32);
 }
 
 /* ── Step 1: Check Supabase cache ── */
@@ -147,7 +196,6 @@ async function checkCache(cacheKey: string): Promise<CvAnalysisResult | null> {
     console.log("[analyze-cv] Cache hit — returning cached result");
     return data.result as CvAnalysisResult;
   } catch {
-    // Cache miss or table doesn't exist yet — continue normally
     return null;
   }
 }
@@ -164,13 +212,12 @@ async function saveToCache(
     await supabase.from("analysis_cache").upsert({
       cache_key:  cacheKey,
       job_role:   jobRole,
-      cv_preview: cvText.slice(0, 200), // first 200 chars for reference
+      cv_preview: cvText.slice(0, 200),
       result,
       created_at: new Date().toISOString(),
     });
     console.log("[analyze-cv] Result saved to cache");
   } catch (err) {
-    // Non-critical — if cache save fails, the user still gets their result
     console.warn("[analyze-cv] Cache save failed (non-critical):", err);
   }
 }
@@ -211,14 +258,13 @@ async function tryGemini(
           await sleep((attempt + 1) * 2000);
           continue;
         }
-        // Non-retryable error for this model — try next model
         console.warn(`[analyze-cv] ${keyLabel} ${modelName} failed:`, err);
         break;
       }
     }
   }
 
-  return null; // all models on this key failed
+  return null;
 }
 
 /* ── Step 4: Groq fallback ── */
@@ -257,7 +303,6 @@ The JSON must have exactly these fields:
     const text = completion.choices[0]?.message?.content;
     if (!text) throw new Error("Empty response from Groq");
 
-    // Strip markdown code blocks if Groq adds them
     const cleaned = text
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/,      "")
@@ -298,59 +343,49 @@ export async function POST(request: NextRequest) {
     const jobDescription = body.jobDescription?.trim();
 
     if (!cvText) {
-      return NextResponse.json(
-        { error: "CV text is required. Upload a PDF first." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "CV text is required. Upload a PDF first." }, { status: 400 });
     }
     if (!jobRole) {
-      return NextResponse.json(
-        { error: "Job role is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Job role is required." }, { status: 400 });
     }
     if (!jobDescription) {
-      return NextResponse.json(
-        { error: "Job description is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Job description is required." }, { status: 400 });
     }
 
     const prompt   = buildPrompt(cvText, jobRole, jobDescription);
     const cacheKey = makeCacheKey(cvText, jobRole, jobDescription);
 
-    /* ── Step 1: Check cache ── */
+    /* Step 1: Check cache */
     const cached = await checkCache(cacheKey);
     if (cached) {
       return NextResponse.json({ ...cached, fromCache: true });
     }
 
-    /* ── Step 2: Try Gemini key 1 ── */
+    /* Step 2: Try Gemini key 1 */
     let result = await tryGemini(prompt, geminiKey1, "Gemini key 1");
 
-    /* ── Step 3: Try Gemini key 2 ── */
+    /* Step 3: Try Gemini key 2 */
     if (!result && geminiKey2) {
       result = await tryGemini(prompt, geminiKey2, "Gemini key 2");
     }
 
-    /* ── Step 4: Try Groq fallback ── */
+    /* Step 4: Try Groq fallback */
     if (!result) {
       result = await tryGroq(cvText, jobRole, jobDescription);
     }
 
-    /* ── All providers failed ── */
+    /* All providers failed */
     if (!result) {
       return NextResponse.json(
         {
-          error:
-            "Our AI service is experiencing very high demand right now. Please wait 30 seconds and try again.",
+          error: "Our AI service is experiencing very high demand right now. Please wait 30 seconds and try again.",
           retryable: true,
         },
         { status: 503 }
       );
     }
 
-    /* ── Step 5: Save to cache ── */
+    /* Step 5: Save to cache */
     void saveToCache(cacheKey, cvText, jobRole, result);
 
     return NextResponse.json(result);

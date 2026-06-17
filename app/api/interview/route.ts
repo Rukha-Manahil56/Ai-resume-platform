@@ -17,69 +17,127 @@ export type InterviewStage =
   | "closing"
   | "complete";
 
-/* ── Prompts ── */
-function buildSystemPrompt(jobRole: string, stage: InterviewStage): string {
+/*
+ * Task 6 — buildSystemPrompt
+ *
+ * The system prompt now explicitly instructs the AI to personalize every
+ * question using the candidate's CV data (skills, projects, experience,
+ * tools) and the job description. Generic questions are forbidden.
+ *
+ * The cvText and jobDescription are passed into the prompt so the AI has
+ * full context at every stage of the conversation.
+ */
+function buildSystemPrompt(
+  jobRole: string,
+  stage: InterviewStage,
+  cvText: string,
+  jobDescription: string
+): string {
   const stageInstructions: Record<InterviewStage, string> = {
     introduction: `
-You are in the INTRODUCTION stage. Ask questions about:
-- The candidate's background and career journey
-- Why they want this specific role
-- What they know about the current state of the industry
-- Their most relevant recent experience
-Ask warm, open-ended questions to put the candidate at ease.`,
+You are in the INTRODUCTION stage.
+Read the candidate's CV carefully before asking anything.
+Ask warm, open-ended questions that are SPECIFIC to this candidate — reference their actual
+background, career transitions, or interesting details you notice in their CV.
+For example, if they changed industries, ask about that. If they have an unusual career path,
+ask about it. Do NOT ask generic openers like "Tell me about yourself" without anchoring it
+to something specific in their profile.`,
 
     technical: `
-You are in the TECHNICAL stage. Ask questions that reflect what companies are actually testing for ${jobRole} roles today. Focus on:
-- Current tools, frameworks, and technologies used in ${jobRole} roles
-- Real problem-solving scenarios specific to this role
-- Recent industry trends and how the candidate keeps up with them
-- Practical hands-on skills that employers prioritize right now
-Make questions specific and challenging, not generic.`,
+You are in the TECHNICAL stage.
+Read the candidate's CV and the job description carefully.
+Ask TECHNICAL questions that are directly relevant to:
+  - Technologies, tools, or frameworks the candidate actually lists on their CV
+  - Skills required by the job description that the candidate may or may not have
+  - Gaps between what the candidate knows and what the role requires
+  - Real problem-solving scenarios a ${jobRole} faces day-to-day in this specific context
+
+Examples of personalized technical questions:
+  - "I see you've used [tool from CV] — how would you approach [scenario from job description]?"
+  - "The role requires [skill from JD] but I don't see it on your CV — how would you handle that?"
+  - "You mentioned [project from CV] — what was the biggest technical challenge and how did you solve it?"
+
+Make questions challenging, specific, and impossible to answer without knowing this candidate's
+actual background. Never ask a generic technical question that any developer could answer.`,
 
     behavioral: `
 You are in the BEHAVIORAL stage. Use the STAR method format.
-Ask about real situations the candidate has handled. Focus on:
-- Collaboration and remote/hybrid team dynamics
-- Handling ambiguity and rapid change
-- Leadership and ownership of outcomes
-- Conflict resolution and stakeholder management
-Start questions with "Tell me about a time when..." or "Describe a situation where..."`,
+Base your questions on ACTUAL EXPERIENCES visible in the candidate's CV.
+Reference their past roles, projects, or skills explicitly.
+For example:
+  - "You worked at [company from CV] as [role from CV] — tell me about a time when..."
+  - "I see you led [project/team detail from CV] — describe a situation where..."
+  - "Given your background in [domain from CV], how did you handle..."
+
+Do NOT ask generic behavioral questions. Every question must anchor to a specific detail
+in this candidate's CV or career history.`,
 
     situational: `
-You are in the SITUATIONAL stage. Present realistic hypothetical scenarios specific to ${jobRole}. Focus on:
-- How they would handle current industry challenges
-- Decision making under pressure
-- Prioritization with limited resources
-- Working with AI tools and automation
-Start questions with "What would you do if..." or "How would you handle..."`,
+You are in the SITUATIONAL stage.
+Present realistic hypothetical scenarios that are SPECIFIC to both the ${jobRole} position
+and this candidate's experience level as shown in their CV.
+Adjust difficulty and complexity to match how senior/junior they appear from the CV.
+Reference their domain, industry, or tools where relevant.
+Example: "If you were brought in as a ${jobRole} at a company using [tech from JD], 
+but the existing codebase relied heavily on [something different from CV], how would 
+you approach..."`,
 
     closing: `
-You are in the CLOSING stage. This is where the candidate asks YOU questions.
-Say something like: "We're nearing the end of our interview. Do you have any questions for me about the role, the team, or the company?"
-Then answer their questions naturally as a knowledgeable interviewer would.
+You are in the CLOSING stage.
+This is where the candidate asks YOU questions.
+Say something like: "We're nearing the end of our interview. Do you have any questions for me 
+about the role, the team, or the company?"
+Then answer their questions naturally as a knowledgeable interviewer would, using context
+from the job description where appropriate.
 If they have no questions, wrap up warmly and tell them you'll be in touch.`,
 
-    complete: `The interview is complete. Give a warm closing statement.`,
+    complete: `The interview is complete. Give a warm, personalized closing statement that
+references something specific and positive you noticed about this candidate.`,
   };
 
   return `You are a senior hiring manager conducting a real job interview for: ${jobRole}.
 
 CURRENT STAGE: ${stage.toUpperCase()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CANDIDATE BACKGROUND (from their CV):
+${cvText || "No CV provided — ask general role-specific questions."}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+JOB DESCRIPTION:
+${jobDescription || "No job description provided — focus on standard ${jobRole} requirements."}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STAGE INSTRUCTIONS:
 ${stageInstructions[stage]}
 
-YOUR RULES — follow these strictly:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+YOUR STRICT RULES — follow these without exception:
+
 1. Ask exactly ONE question per message. Never ask two questions at once.
-2. After the candidate answers, except in introduction stage, give brief feedback:
+
+2. PERSONALIZATION IS MANDATORY: Every question must be grounded in something
+   specific from the candidate's CV or the job description. Never ask a question
+   that could apply to any random candidate regardless of their background.
+
+3. After the candidate answers (except introduction stage), give brief feedback:
    - Start with "Feedback:" on a new line
    - One specific strength from their answer
    - One concrete improvement tip
    - Keep feedback to 2 sentences max
-3. Then on a new line write "Next question:" and ask the next question.
-4. For introduction stage, skip feedback and just ask the next question naturally.
-5. Keep a professional but friendly tone.
-6. Never repeat a question already asked.
-7. Never mention being an AI or any AI service name.
-8. Make the interview feel realistic, current, and role-specific.`;
+
+4. Then on a new line write "Next question:" and ask the next personalized question.
+
+5. For introduction stage, skip the feedback and ask the next question naturally.
+
+6. Keep a professional but friendly tone.
+
+7. Never repeat a question already asked in this conversation.
+
+8. Never mention being an AI or any AI service name.
+
+9. Make the interview feel realistic, current, and completely tailored to this individual.`;
 }
 
 /* ── Helpers ── */
@@ -117,13 +175,15 @@ function getStageFromMessageCount(count: number): InterviewStage {
   return "complete";
 }
 
-/* ── Step 1 & 2: Try a single Gemini API key across all models ── */
+/* ── Try a single Gemini API key ── */
 async function tryGeminiKey(
   apiKey: string,
   keyLabel: string,
   messages: InterviewMessage[],
   jobRole: string,
-  stage: InterviewStage
+  stage: InterviewStage,
+  cvText: string,
+  jobDescription: string
 ): Promise<string | null> {
   const ai = new GoogleGenAI({ apiKey });
 
@@ -136,7 +196,7 @@ async function tryGeminiKey(
           model: modelName,
           contents: toGeminiContents(messages),
           config: {
-            systemInstruction: buildSystemPrompt(jobRole, stage),
+            systemInstruction: buildSystemPrompt(jobRole, stage, cvText, jobDescription),
             temperature: 0.75,
           },
         });
@@ -162,11 +222,13 @@ async function tryGeminiKey(
   return null;
 }
 
-/* ── Step 3: Groq fallback ── */
+/* ── Groq fallback ── */
 async function tryGroq(
   messages: InterviewMessage[],
   jobRole: string,
-  stage: InterviewStage
+  stage: InterviewStage,
+  cvText: string,
+  jobDescription: string
 ): Promise<string | null> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -178,16 +240,13 @@ async function tryGroq(
     console.log("[interview] Trying Groq fallback");
     const groq = new Groq({ apiKey });
 
-    /* Convert messages to Groq format */
     const groqMessages: { role: "system" | "user" | "assistant"; content: string }[] = [
       {
         role: "system",
-        content: buildSystemPrompt(jobRole, stage),
+        content: buildSystemPrompt(jobRole, stage, cvText, jobDescription),
       },
       ...messages.map((msg) => ({
-        role: msg.role === "assistant"
-          ? ("assistant" as const)
-          : ("user" as const),
+        role: msg.role === "assistant" ? ("assistant" as const) : ("user" as const),
         content: msg.content,
       })),
     ];
@@ -217,10 +276,7 @@ export async function POST(request: NextRequest) {
   const geminiKey2 = process.env.GEMINI_API_KEY_2;
 
   if (!geminiKey1) {
-    return NextResponse.json(
-      { error: "AI service is not configured." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "AI service is not configured." }, { status: 500 });
   }
 
   try {
@@ -228,47 +284,45 @@ export async function POST(request: NextRequest) {
       jobRole?: string;
       messages?: InterviewMessage[];
       stage?: InterviewStage;
+      /*
+       * Task 6: The frontend should now pass cvText and jobDescription through
+       * to the interview API so the AI can personalize every question.
+       * Both fields are optional — if absent, the AI falls back to role-general questions.
+       */
+      cvText?: string;
+      jobDescription?: string;
     };
 
-    const jobRole  = body.jobRole?.trim();
-    const messages = body.messages ?? [];
-    const stage    = body.stage ?? getStageFromMessageCount(messages.length);
+    const jobRole        = body.jobRole?.trim() ?? "";
+    const messages       = body.messages ?? [];
+    const stage          = body.stage ?? getStageFromMessageCount(messages.length);
+    const cvText         = body.cvText?.trim() ?? "";
+    const jobDescription = body.jobDescription?.trim() ?? "";
 
     if (!jobRole) {
-      return NextResponse.json(
-        { error: "Job role is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Job role is required." }, { status: 400 });
     }
-
     if (messages.length === 0) {
-      return NextResponse.json(
-        { error: "Conversation history is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Conversation history is required." }, { status: 400 });
     }
-
     if (messages[messages.length - 1].role !== "user") {
-      return NextResponse.json(
-        { error: "Last message must be from the user." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Last message must be from the user." }, { status: 400 });
     }
 
-    /* ── Step 1: Try Gemini key 1 ── */
-    let reply = await tryGeminiKey(geminiKey1, "Gemini key 1", messages, jobRole, stage);
+    /* Step 1: Try Gemini key 1 */
+    let reply = await tryGeminiKey(geminiKey1, "Gemini key 1", messages, jobRole, stage, cvText, jobDescription);
 
-    /* ── Step 2: Try Gemini key 2 ── */
+    /* Step 2: Try Gemini key 2 */
     if (!reply && geminiKey2) {
-      reply = await tryGeminiKey(geminiKey2, "Gemini key 2", messages, jobRole, stage);
+      reply = await tryGeminiKey(geminiKey2, "Gemini key 2", messages, jobRole, stage, cvText, jobDescription);
     }
 
-    /* ── Step 3: Try Groq fallback ── */
+    /* Step 3: Try Groq fallback */
     if (!reply) {
-      reply = await tryGroq(messages, jobRole, stage);
+      reply = await tryGroq(messages, jobRole, stage, cvText, jobDescription);
     }
 
-    /* ── Step 4: All providers failed ── */
+    /* All providers failed */
     if (!reply) {
       return NextResponse.json(
         {
@@ -280,7 +334,6 @@ export async function POST(request: NextRequest) {
     }
 
     const nextStage = getStageFromMessageCount(messages.length + 1);
-
     return NextResponse.json({ reply, stage: nextStage });
 
   } catch (error) {
