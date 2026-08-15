@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 /* ── Models ── */
 const GEMINI_MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"];
-const GROQ_MODEL    = "llama-3.3-70b-versatile";
+const GROQ_MODEL    = "gpt-oss-120b";
 
 /* ── Response schema for Gemini ── */
 const ANALYSIS_RESPONSE_SCHEMA = {
