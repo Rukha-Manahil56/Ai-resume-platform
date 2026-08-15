@@ -7,7 +7,7 @@ import { mapGeminiError } from "@/lib/map-gemini-error";
 export const runtime = "nodejs";
 
 const GEMINI_MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"];
-const GROQ_MODEL    = "llama-3.3-70b-versatile";
+const GROQ_MODEL    = "gpt-oss-120b";
 
 export type InterviewStage =
   | "introduction"
